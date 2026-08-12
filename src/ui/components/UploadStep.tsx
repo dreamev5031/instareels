@@ -30,7 +30,7 @@ export default function UploadStep({ job, loading, onUpload, onAnalyze, showAnal
     <section className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4 shadow-sm">
       <div className="mb-3 flex items-center gap-2">
         <span className="flex h-6 w-6 items-center justify-center rounded-full bg-[var(--primary)] text-xs font-semibold text-white">
-          2
+          3
         </span>
         <h2 className="text-base font-semibold">영상 추가</h2>
       </div>

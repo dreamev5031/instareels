@@ -8,6 +8,8 @@ const CONTENT_TYPES: Record<string, string> = {
   ".mp3": "audio/mpeg",
   ".jpg": "image/jpeg",
   ".jpeg": "image/jpeg",
+  ".png": "image/png",
+  ".webp": "image/webp",
   ".mp4": "video/mp4",
   ".mov": "video/quicktime",
   ".webm": "video/webm",
@@ -29,6 +31,8 @@ export async function GET(
   let filePath: string | undefined;
   if (kind === "tts") {
     filePath = job.tts?.file;
+  } else if (kind === "cover") {
+    filePath = job.cover.image?.file;
   } else if (kind === "thumb" && sub) {
     filePath = job.sources.find((s) => s.source_id === sub)?.thumbnail;
   } else if (kind === "source" && sub) {

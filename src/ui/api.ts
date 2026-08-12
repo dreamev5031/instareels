@@ -1,4 +1,4 @@
-import { Job, Voice } from "@/shared/types";
+import { CoverSettings, Job, Voice } from "@/shared/types";
 
 // Empty string in same-origin/local dev (relative fetches keep working as-is).
 // Set to the backend's public URL when the frontend is deployed separately.
@@ -30,6 +30,19 @@ export async function uploadVideos(jobId: string, files: File[]): Promise<Job> {
   formData.append("jobId", jobId);
   for (const f of files) formData.append("files", f);
   const res = await fetch(`${API_BASE_URL}/api/upload`, { method: "POST", body: formData });
+  return parseJobResponse(res);
+}
+
+export async function saveCover(
+  jobId: string,
+  file: File | null,
+  settings: Omit<CoverSettings, "image">
+): Promise<Job> {
+  const formData = new FormData();
+  formData.append("jobId", jobId);
+  formData.append("settings", JSON.stringify(settings));
+  if (file) formData.append("file", file);
+  const res = await fetch(`${API_BASE_URL}/api/cover`, { method: "POST", body: formData });
   return parseJobResponse(res);
 }
 

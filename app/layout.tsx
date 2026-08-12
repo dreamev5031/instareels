@@ -1,4 +1,14 @@
 import type { Metadata, Viewport } from "next";
+import "pretendard/dist/web/static/Pretendard-ExtraBold.css";
+import "@noonnu/nanum-square-round";
+import "@noonnu/noto-sans-kr";
+import "@noonnu/gmarket-sans-medium";
+import "@noonnu/tmoney-round-wind-extra-bold";
+import "@kfonts/bm-dohyeon";
+import "@kfonts/bm-hanna-pro";
+import "@kfonts/bm-jua";
+import "@noonnu/cafe24-dangdanghae";
+import "@noonnu/yg-jalnan";
 import "./globals.css";
 
 export const metadata: Metadata = {

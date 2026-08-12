@@ -1,5 +1,6 @@
 export type StageName =
   | "TTS"
+  | "COVER"
   | "UPLOAD"
   | "OCR"
   | "CLIP"
@@ -8,6 +9,7 @@ export type StageName =
 
 export const STAGE_ORDER: StageName[] = [
   "TTS",
+  "COVER",
   "UPLOAD",
   "OCR",
   "CLIP",
@@ -21,6 +23,11 @@ export type ErrorCode =
   | "TTS_EMPTY_TEXT"
   | "TTS_GENERATION_FAILED"
   | "TTS_PROBE_FAILED"
+  | "COVER_IMAGE_REQUIRED"
+  | "COVER_IMAGE_TOO_LARGE"
+  | "COVER_UNSUPPORTED_FORMAT"
+  | "COVER_INVALID_SETTINGS"
+  | "COVER_SAVE_FAILED"
   | "UPLOAD_NO_FILES"
   | "UPLOAD_PROBE_FAILED"
   | "UPLOAD_UNSUPPORTED_FORMAT"
@@ -38,6 +45,57 @@ export type ErrorCode =
   | "CONSECUTIVE_SOURCE_LIMIT"
   | "SCENE_ID_SEQUENCE"
   | "DURATION_MISMATCH";
+
+export const COVER_FONT_KEYS = [
+  "nanum-square-round",
+  "pretendard",
+  "noto-sans-kr",
+  "gmarket-sans",
+  "tmoney-round-wind",
+  "bm-dohyeon",
+  "bm-hanna",
+  "bm-jua",
+  "score-dream-extrabold",
+  "cafe24-dangdanghae",
+  "yg-jalnan",
+] as const;
+
+export type CoverFontKey = (typeof COVER_FONT_KEYS)[number];
+export type CoverVerticalPosition = "top" | "middle" | "bottom";
+
+export interface CoverImageInfo {
+  file: string;
+  original_filename: string;
+  mime_type: string;
+  size: number;
+}
+
+export interface CoverSettings {
+  image?: CoverImageInfo;
+  main_text: string;
+  sub_text: string;
+  main_font: CoverFontKey;
+  sub_font: CoverFontKey;
+  use_same_font: boolean;
+  vertical_position: CoverVerticalPosition;
+  text_color: string;
+  shadow_enabled: boolean;
+  stroke_enabled: boolean;
+}
+
+export function createDefaultCoverSettings(): CoverSettings {
+  return {
+    main_text: "",
+    sub_text: "",
+    main_font: "score-dream-extrabold",
+    sub_font: "score-dream-extrabold",
+    use_same_font: true,
+    vertical_position: "top",
+    text_color: "#ffffff",
+    shadow_enabled: true,
+    stroke_enabled: true,
+  };
+}
 
 export interface JobError {
   stage: StageName;
@@ -183,6 +241,7 @@ export interface Job {
   updated_at: string;
   stages: Record<StageName, StageState>;
   tts?: TtsResult;
+  cover: CoverSettings;
   sources: SourceVideo[];
   ocr: Record<string, OcrSegment[]>;
   clips: Clip[];
