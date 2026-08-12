@@ -1,4 +1,4 @@
-import { CoverSettings, Job, Voice } from "@/shared/types";
+import { CoverSettings, Job, SubtitleSettings, Voice } from "@/shared/types";
 
 // Empty string in same-origin/local dev (relative fetches keep working as-is).
 // Set to the backend's public URL when the frontend is deployed separately.
@@ -119,4 +119,16 @@ export async function renderVideo(
   }
   if (!lastJob) throw new Error("렌더 결과를 받지 못했습니다.");
   return lastJob;
+}
+
+export async function saveSubtitle(jobId: string, settings: SubtitleSettings): Promise<Job> {
+  const res = await fetch(`${API_BASE_URL}/api/job/${jobId}/subtitle`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ settings }),
+  });
+  const body = await res.json();
+  if (!res.ok) throw new Error(body.message || body.error || "자막 설정 저장에 실패했습니다.");
+  if (!body.job) throw new Error("자막 설정 결과를 받지 못했습니다.");
+  return body.job as Job;
 }

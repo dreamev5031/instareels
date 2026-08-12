@@ -1,6 +1,6 @@
 import type { Job, StageName } from "@/shared/types";
 
-const STEPS = ["대본/TTS", "앞표지", "영상", "분석", "결과"];
+const STEPS = ["TTS", "앞표지", "영상", "분석", "자막", "결과"];
 
 export default function WorkflowSteps({ job }: { job: Job | null }) {
   const completed = [
@@ -8,13 +8,14 @@ export default function WorkflowSteps({ job }: { job: Job | null }) {
     job?.stages.COVER.status === "SUCCESS",
     job?.stages.UPLOAD.status === "SUCCESS",
     Boolean(job && (["OCR", "CLIP", "ALLOCATE"] as StageName[]).some((stage) => job.stages[stage].status === "SUCCESS")),
+    job?.subtitle.status === "SUCCESS",
     job?.stages.VALIDATE.status === "SUCCESS",
   ];
   const firstIncomplete = completed.findIndex((done) => !done);
   const activeIndex = firstIncomplete === -1 ? STEPS.length - 1 : firstIncomplete;
 
   return (
-    <ol className="mt-3 grid grid-cols-5 gap-1" aria-label="작업 단계">
+    <ol className="mt-3 grid grid-cols-6 gap-1" aria-label="작업 단계">
       {STEPS.map((label, index) => {
         const done = completed[index];
         const active = index === activeIndex;

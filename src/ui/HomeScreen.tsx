@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Job, STAGE_ORDER, StageName } from "@/shared/types";
-import { generateTts, renderVideo, runAnalysis, saveCover, uploadVideos } from "./api";
+import { generateTts, renderVideo, runAnalysis, saveCover, saveSubtitle, uploadVideos } from "./api";
 import { DEFAULT_VOICE } from "@/tts/voices";
 import TtsStep from "./components/TtsStep";
 import UploadStep from "./components/UploadStep";
@@ -13,6 +13,8 @@ import CoverStep from "./components/CoverStep";
 import WorkflowSteps from "./components/WorkflowSteps";
 import type { CoverSettings } from "@/shared/types";
 import RenderPanel from "./components/RenderPanel";
+import SubtitleStep from "./components/SubtitleStep";
+import type { SubtitleSettings } from "@/shared/types";
 
 export default function HomeScreen() {
   const [job, setJob] = useState<Job | null>(null);
@@ -27,6 +29,8 @@ export default function HomeScreen() {
   const [uploadLoading, setUploadLoading] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [rendering, setRendering] = useState(false);
+  const [subtitleSaving, setSubtitleSaving] = useState(false);
+  const [subtitleDirty, setSubtitleDirty] = useState(false);
   const [requestError, setRequestError] = useState<string | null>(null);
 
   const failedStage: StageName | null = job
@@ -102,6 +106,22 @@ export default function HomeScreen() {
       setRequestError((err as Error).message);
     } finally {
       setRendering(false);
+    }
+  }
+
+  async function handleSubtitleSave(settings: SubtitleSettings) {
+    if (!job) return;
+    setSubtitleSaving(true);
+    setRequestError(null);
+    try {
+      const updated = await saveSubtitle(job.job_id, settings);
+      setJob(updated);
+      setSubtitleDirty(false);
+    } catch (err) {
+      setRequestError((err as Error).message);
+      throw err;
+    } finally {
+      setSubtitleSaving(false);
     }
   }
 
@@ -184,7 +204,8 @@ export default function HomeScreen() {
         {showResult && job && (
           <>
             <ResultSummary job={job} />
-            <RenderPanel job={job} rendering={rendering} onRender={handleRender} />
+            <SubtitleStep job={job} saving={subtitleSaving} onSave={handleSubtitleSave} onDirtyChange={setSubtitleDirty} />
+            <RenderPanel job={job} rendering={rendering} onRender={handleRender} subtitleReady={job.subtitle.status === "SUCCESS" && !subtitleDirty} />
           </>
         )}
       </div>

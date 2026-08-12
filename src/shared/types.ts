@@ -51,6 +51,11 @@ export type ErrorCode =
   | "RENDER_VALIDATE_REQUIRED"
   | "RENDER_ALREADY_RUNNING"
   | "RENDER_PLAN_INVALID"
+  | "SUBTITLE_INVALID_SETTINGS"
+  | "SUBTITLE_TIMING_FAILED"
+  | "SUBTITLE_FONT_NOT_FOUND"
+  | "SUBTITLE_ASS_GENERATION_FAILED"
+  | "SUBTITLE_BURN_FAILED"
   | "RENDER_SOURCE_MISSING"
   | "SOURCE_DECODE_FAILED"
   | "VIDEO_ASSEMBLY_FAILED"
@@ -147,10 +152,87 @@ export type Voice = {
 
 export interface TtsResult {
   status: "success" | "failed";
+  provider: TtsProviderName;
   text: string;
   voice: string;
   file: string;
+  audio_path: string;
   duration: number;
+  timing: TtsTimingData;
+}
+
+export type TtsProviderName = "edge" | "elevenlabs";
+
+export interface TtsWordTiming {
+  text: string;
+  start: number;
+  end: number;
+  text_start?: number;
+  text_end?: number;
+}
+
+export interface TtsTimingData {
+  source: "provider_word" | "provider_segment" | "duration_fallback";
+  words: TtsWordTiming[];
+}
+
+export const SUBTITLE_EFFECTS = [
+  "typewriter",
+  "rushed_typing",
+  "copybook",
+  "flat_popout",
+  "word_zoom",
+  "breeze",
+  "transparent_gradient",
+  "pink_blink",
+  "easy_slide",
+] as const;
+
+export type SubtitleEffect = (typeof SUBTITLE_EFFECTS)[number];
+export type SubtitleVerticalPosition = "top" | "middle" | "bottom";
+
+export interface SubtitleSettings {
+  enabled: boolean;
+  font: CoverFontKey;
+  size: number;
+  color: string;
+  stroke_enabled: boolean;
+  shadow_enabled: boolean;
+  vertical_position: SubtitleVerticalPosition;
+  effect: SubtitleEffect;
+}
+
+export interface SubtitleSegment {
+  segment_id: string;
+  text: string;
+  start: number;
+  end: number;
+  word_timings: TtsWordTiming[];
+}
+
+export interface SubtitleResult {
+  status: "PENDING" | "SUCCESS" | "FAILED";
+  settings: SubtitleSettings;
+  segments: SubtitleSegment[];
+  timing_source?: TtsTimingData["source"];
+  ass_file?: string;
+  burned_file?: string;
+  event_count?: number;
+  burn_verified?: boolean;
+  error?: JobError;
+}
+
+export function createDefaultSubtitleSettings(): SubtitleSettings {
+  return {
+    enabled: true,
+    font: "pretendard",
+    size: 104,
+    color: "#ffffff",
+    stroke_enabled: true,
+    shadow_enabled: true,
+    vertical_position: "bottom",
+    effect: "typewriter",
+  };
 }
 
 export type SourceStatus = "PENDING" | "ANALYZING" | "ANALYZED" | "FAILED";
@@ -256,12 +338,16 @@ export interface ValidationResult {
 
 export type RenderSubstageName =
   | "VIDEO_ASSEMBLY"
+  | "SUBTITLE_GENERATION"
+  | "SUBTITLE_BURN"
   | "COVER_RENDER"
   | "FINAL_CONCAT"
   | "OUTPUT_VALIDATE";
 
 export const RENDER_SUBSTAGE_ORDER: RenderSubstageName[] = [
   "VIDEO_ASSEMBLY",
+  "SUBTITLE_GENERATION",
+  "SUBTITLE_BURN",
   "COVER_RENDER",
   "FINAL_CONCAT",
   "OUTPUT_VALIDATE",
@@ -307,6 +393,7 @@ export interface Job {
   stages: Record<StageName, StageState>;
   tts?: TtsResult;
   cover: CoverSettings;
+  subtitle: SubtitleResult;
   ocr_enabled: boolean;
   sources: SourceVideo[];
   ocr: Record<string, OcrSegment[]>;

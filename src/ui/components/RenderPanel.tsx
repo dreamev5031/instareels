@@ -5,6 +5,8 @@ import { API_BASE_URL } from "@/ui/api";
 
 const SUBSTAGE_LABELS: Record<RenderSubstageName, string> = {
   VIDEO_ASSEMBLY: "본영상 조립",
+  SUBTITLE_GENERATION: "ASS 자막 생성",
+  SUBTITLE_BURN: "자막 입히기",
   COVER_RENDER: "앞표지 생성",
   FINAL_CONCAT: "최종 영상 결합",
   OUTPUT_VALIDATE: "출력 검증",
@@ -14,10 +16,12 @@ export default function RenderPanel({
   job,
   rendering,
   onRender,
+  subtitleReady,
 }: {
   job: Job;
   rendering: boolean;
   onRender: () => void;
+  subtitleReady: boolean;
 }) {
   const stage = job.stages.RENDER;
   const result = job.render;
@@ -74,12 +78,13 @@ export default function RenderPanel({
           type="button"
           data-testid="render-button"
           onClick={onRender}
-          disabled={rendering || job.validation?.status !== "PASS"}
+          disabled={rendering || job.validation?.status !== "PASS" || !subtitleReady}
           className="mt-3 w-full rounded-xl bg-[var(--primary-dark)] py-3 text-sm font-semibold text-white transition active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40"
         >
           {rendering ? "영상 렌더 중..." : failed ? "영상 렌더 다시 시도" : "영상 렌더"}
         </button>
       )}
+      {!success && !subtitleReady && <p className="mt-2 text-center text-[11px] text-[var(--warning)]">자막 설정을 저장하면 렌더할 수 있습니다.</p>}
     </section>
   );
 }

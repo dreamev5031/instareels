@@ -3,9 +3,12 @@ import { probeAudioDuration } from "@/shared/ffmpeg";
 import { jobTtsDir } from "@/jobs/paths";
 import { addLog, failStage, resetDownstreamStages, startStage, succeedStage } from "@/jobs/store";
 import { synthesizeSpeech, renameTtsFile } from "./edgeTts";
+import { EdgeTTSProvider } from "./edgeTts";
+import type { TtsProvider } from "./provider";
 import { isSupportedVoice } from "./voices";
 
 export interface TtsStageDependencies {
+  provider?: TtsProvider;
   synthesizeSpeech: typeof synthesizeSpeech;
   renameTtsFile: typeof renameTtsFile;
   probeAudioDuration: typeof probeAudioDuration;
@@ -53,9 +56,30 @@ export async function runTtsStage(
 
   try {
     const outDir = jobTtsDir(job.job_id);
-    const rawPath = await dependencies.synthesizeSpeech(trimmed, voice, outDir);
-    const file = await dependencies.renameTtsFile(rawPath, outDir);
-    const duration = await dependencies.probeAudioDuration(file);
+    const provider = dependencyOverrides.provider;
+    let file: string;
+    let duration: number;
+    let timing: TtsResult["timing"];
+    let providerName: TtsResult["provider"];
+    if (provider) {
+      const output = await provider.synthesize(trimmed, voice, outDir);
+      file = output.audioPath;
+      duration = output.duration;
+      timing = output.timing;
+      providerName = output.provider;
+    } else if (dependencyOverrides.synthesizeSpeech || dependencyOverrides.renameTtsFile || dependencyOverrides.probeAudioDuration) {
+      const rawPath = await dependencies.synthesizeSpeech(trimmed, voice, outDir);
+      file = await dependencies.renameTtsFile(rawPath, outDir);
+      duration = await dependencies.probeAudioDuration(file);
+      timing = { source: "duration_fallback", words: [] };
+      providerName = "edge";
+    } else {
+      const output = await new EdgeTTSProvider().synthesize(trimmed, voice, outDir);
+      file = output.audioPath;
+      duration = output.duration;
+      timing = output.timing;
+      providerName = output.provider;
+    }
 
     if (!duration || duration <= 0) {
       throw new PipelineError(
@@ -68,13 +92,16 @@ export async function runTtsStage(
 
     const result: TtsResult = {
       status: "success",
+      provider: providerName,
       text: trimmed,
       voice,
       file,
+      audio_path: file,
       duration,
+      timing,
     };
     job.tts = result;
-    addLog(job, "TTS", "info", `TTS 생성 완료: ${duration.toFixed(2)}초`, { voice, duration });
+    addLog(job, "TTS", "info", `TTS 생성 완료: ${duration.toFixed(2)}초`, { voice, duration, provider: providerName, timing_source: timing.source, word_timing_count: timing.words.length });
     succeedStage(job, "TTS");
   } catch (err) {
     const pipelineErr =

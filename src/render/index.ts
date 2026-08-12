@@ -12,7 +12,8 @@ import {
   StageState,
 } from "@/shared/types";
 import { MediaCommandError, probeOutputMedia, runFfmpeg } from "@/shared/ffmpeg";
-import { prepareRenderFont } from "./fonts";
+import { prepareRenderFont, readRenderFontFamily } from "./fonts";
+import { writeAssFile } from "@/subtitle/ass";
 
 const OUTPUT_WIDTH = 1080;
 const OUTPUT_HEIGHT = 1920;
@@ -30,6 +31,11 @@ type RenderErrorCode = Extract<
   | "RENDER_SOURCE_MISSING"
   | "SOURCE_DECODE_FAILED"
   | "VIDEO_ASSEMBLY_FAILED"
+  | "SUBTITLE_INVALID_SETTINGS"
+  | "SUBTITLE_TIMING_FAILED"
+  | "SUBTITLE_FONT_NOT_FOUND"
+  | "SUBTITLE_ASS_GENERATION_FAILED"
+  | "SUBTITLE_BURN_FAILED"
   | "FONT_PREPARE_FAILED"
   | "COVER_RENDER_FAILED"
   | "FINAL_CONCAT_FAILED"
@@ -88,6 +94,14 @@ function succeedSubstage(job: Job, name: RenderSubstageName, onProgress?: Render
     finishedAt: new Date().toISOString(),
   };
   addLog(job, "RENDER", "info", `${name} 완료`, { substage: name });
+  saveJob(job);
+  onProgress?.(job);
+}
+
+function skipSubstage(job: Job, name: RenderSubstageName, onProgress?: RenderProgressCallback) {
+  const now = new Date().toISOString();
+  job.render!.substages[name] = { status: "SKIPPED", startedAt: now, finishedAt: now, skipReason: "DISABLED_BY_USER" };
+  addLog(job, "RENDER", "info", `${name} 건너뜀`, { substage: name, reason: "DISABLED_BY_USER" });
   saveJob(job);
   onProgress?.(job);
 }
@@ -249,7 +263,7 @@ async function renderVideoAssembly(job: Job, onProgress?: RenderProgressCallback
 
   const assembled = path.join(renderDir, "assembled.mp4");
   const muxArgs = [
-    "-y", "-i", videoOnly, "-i", job.tts!.file, "-map", "0:v:0", "-map", "1:a:0",
+    "-y", "-i", videoOnly, "-i", job.tts!.audio_path, "-map", "0:v:0", "-map", "1:a:0",
     "-c:v", "copy", "-c:a", "aac", "-ar", "24000", "-ac", "1", "-b:a", "144k",
     "-t", String(job.tts!.duration), "-video_track_timescale", "30000", "-movflags", "+faststart", assembled,
   ];
@@ -257,7 +271,7 @@ async function renderVideoAssembly(job: Job, onProgress?: RenderProgressCallback
     await runFfmpeg(muxArgs);
   } catch (caught) {
     throw new RenderStepError("VIDEO_ASSEMBLY", "VIDEO_ASSEMBLY_FAILED", "본영상에 TTS 오디오를 결합하지 못했습니다.", {
-      file_path: job.tts!.file, ffmpeg_command_summary: commandSummary(muxArgs), stderr: stderrTail(caught),
+      file_path: job.tts!.audio_path, ffmpeg_command_summary: commandSummary(muxArgs), stderr: stderrTail(caught),
     });
   }
 
@@ -314,12 +328,106 @@ async function renderCover(job: Job, onProgress?: RenderProgressCallback) {
   succeedSubstage(job, "COVER_RENDER", onProgress);
 }
 
+async function generateAndBurnSubtitles(job: Job, onProgress?: RenderProgressCallback) {
+  if (!job.subtitle.settings.enabled) {
+    skipSubstage(job, "SUBTITLE_GENERATION", onProgress);
+    skipSubstage(job, "SUBTITLE_BURN", onProgress);
+    job.subtitle = { ...job.subtitle, status: "SUCCESS", ass_file: undefined, burned_file: job.render!.assembled_file, event_count: 0, burn_verified: true };
+    saveJob(job);
+    return;
+  }
+  if (job.subtitle.status !== "SUCCESS" || job.subtitle.segments.length === 0) {
+    throw new RenderStepError("SUBTITLE_GENERATION", "SUBTITLE_TIMING_FAILED", "확정된 자막 segment가 없습니다. 자막 설정을 먼저 저장해 주세요.", {
+      subtitle_status: job.subtitle.status,
+      segment_count: job.subtitle.segments.length,
+    });
+  }
+
+  startSubstage(job, "SUBTITLE_GENERATION", onProgress);
+  const renderDir = jobRenderDir(job.job_id);
+  const fontsDir = path.join(renderDir, "fonts");
+  let subtitleFontFamily: string;
+  try {
+    const subtitleFontFile = await prepareRenderFont(job.subtitle.settings.font, fontsDir);
+    subtitleFontFamily = await readRenderFontFamily(subtitleFontFile);
+  } catch (caught) {
+    throw new RenderStepError("SUBTITLE_GENERATION", "SUBTITLE_FONT_NOT_FOUND", "선택한 자막 폰트를 준비하지 못했습니다.", {
+      font: job.subtitle.settings.font,
+      file_path: fontsDir,
+      stderr: stderrTail(caught),
+    });
+  }
+  const assFile = path.join(renderDir, "subtitles.ass");
+  let eventCount = 0;
+  try {
+    eventCount = await writeAssFile(assFile, job.subtitle.segments, job.subtitle.settings, subtitleFontFamily);
+    if (eventCount <= 0) throw new Error("ASS Dialogue event가 0개입니다.");
+  } catch (caught) {
+    throw new RenderStepError("SUBTITLE_GENERATION", "SUBTITLE_ASS_GENERATION_FAILED", "ASS 자막 생성에 실패했습니다.", {
+      file_path: assFile,
+      segment_count: job.subtitle.segments.length,
+      effect: job.subtitle.settings.effect,
+      stderr: stderrTail(caught),
+    });
+  }
+  Object.assign(job.subtitle, { ass_file: assFile, event_count: eventCount });
+  addLog(job, "RENDER", "info", `ASS 자막 생성 완료: ${job.subtitle.segments.length}개 segment / ${eventCount}개 event`, {
+    substage: "SUBTITLE_GENERATION", ass_file: assFile, font: job.subtitle.settings.font, font_family: subtitleFontFamily, effect: job.subtitle.settings.effect,
+  });
+  succeedSubstage(job, "SUBTITLE_GENERATION", onProgress);
+
+  startSubstage(job, "SUBTITLE_BURN", onProgress);
+  const burnedFile = path.join(renderDir, "subtitled.mp4");
+  const filter = `subtitles=filename='${escapeFilterPath(assFile)}':fontsdir='${escapeFilterPath(fontsDir)}'`;
+  const args = [
+    "-y", "-i", job.render!.assembled_file!, "-vf", filter,
+    "-c:v", "libx264", "-preset", "veryfast", "-crf", "21", "-pix_fmt", "yuv420p",
+    "-c:a", "copy", "-video_track_timescale", "30000", "-movflags", "+faststart", burnedFile,
+  ];
+  try {
+    await runFfmpeg(args);
+  } catch (caught) {
+    throw new RenderStepError("SUBTITLE_BURN", "SUBTITLE_BURN_FAILED", "FFmpeg/libass 자막 burn-in에 실패했습니다.", {
+      font: job.subtitle.settings.font,
+      ass_file: assFile,
+      file_path: burnedFile,
+      ffmpeg_command_summary: commandSummary(args),
+      stderr: stderrTail(caught),
+    });
+  }
+
+  const sampleTime = Math.max(0.05, Math.min(job.tts!.duration - 0.05, (job.subtitle.segments[0]!.start + job.subtitle.segments[0]!.end) / 2));
+  let similarity = 1;
+  try {
+    const { stderr } = await runFfmpeg([
+      "-v", "info", "-ss", String(sampleTime), "-i", job.render!.assembled_file!,
+      "-ss", String(sampleTime), "-i", burnedFile,
+      "-filter_complex", "[0:v][1:v]ssim",
+      "-frames:v", "1", "-f", "null", "-",
+    ]);
+    const match = stderr.match(/All:([0-9.]+)/);
+    similarity = match ? Number.parseFloat(match[1]!) : 1;
+  } catch (caught) {
+    throw new RenderStepError("SUBTITLE_BURN", "SUBTITLE_BURN_FAILED", "자막 burn-in 프레임 검증에 실패했습니다.", {
+      file_path: burnedFile, stderr: stderrTail(caught), sample_time: sampleTime,
+    });
+  }
+  if (similarity >= 0.9998) {
+    throw new RenderStepError("SUBTITLE_BURN", "SUBTITLE_BURN_FAILED", "자막이 실제 영상 픽셀에 반영되지 않았습니다.", {
+      file_path: burnedFile, ass_file: assFile, sample_time: sampleTime, frame_ssim: similarity,
+    });
+  }
+  Object.assign(job.subtitle, { burned_file: burnedFile, burn_verified: true });
+  addLog(job, "RENDER", "info", "자막 burn-in 검증 통과", { substage: "SUBTITLE_BURN", frame_ssim: similarity, sample_time: sampleTime });
+  succeedSubstage(job, "SUBTITLE_BURN", onProgress);
+}
+
 async function concatFinal(job: Job, onProgress?: RenderProgressCallback) {
   startSubstage(job, "FINAL_CONCAT", onProgress);
   const renderDir = jobRenderDir(job.job_id);
   const finalFile = path.join(renderDir, "final.mp4");
   const args = [
-    "-y", "-i", job.render!.cover_file!, "-i", job.render!.assembled_file!,
+    "-y", "-i", job.render!.cover_file!, "-i", job.subtitle.burned_file ?? job.render!.assembled_file!,
     "-filter_complex",
     "[0:v]setpts=PTS-STARTPTS[v0];[0:a]asetpts=PTS-STARTPTS[a0];" +
       "[1:v]setpts=PTS-STARTPTS[v1];[1:a]asetpts=PTS-STARTPTS[a1];" +
@@ -418,8 +526,13 @@ export async function runRenderStage(job: Job, onProgress?: RenderProgressCallba
       context: { validate_stage: job.stages.VALIDATE.status, validation: job.validation?.status ?? null },
     });
   }
-  if (!job.tts?.file || !job.cover.image?.file || job.scenes.length === 0) {
+  if (!job.tts?.audio_path || !job.cover.image?.file || job.scenes.length === 0) {
     throw new PipelineError("RENDER", "RENDER_PLAN_INVALID", "TTS, 앞표지, scene 렌더 계획이 모두 필요합니다.");
+  }
+  if (job.subtitle.settings.enabled && (job.subtitle.status !== "SUCCESS" || job.subtitle.segments.length === 0)) {
+    throw new PipelineError("RENDER", "SUBTITLE_TIMING_FAILED", "자막 설정을 저장해 확정된 segment를 만든 뒤 렌더해 주세요.", {
+      context: { subtitle_status: job.subtitle.status, segment_count: job.subtitle.segments.length },
+    });
   }
 
   startStage(job, "RENDER");
@@ -430,6 +543,7 @@ export async function runRenderStage(job: Job, onProgress?: RenderProgressCallba
   try {
     await fs.mkdir(jobRenderDir(job.job_id), { recursive: true });
     await renderVideoAssembly(job, onProgress);
+    await generateAndBurnSubtitles(job, onProgress);
     await renderCover(job, onProgress);
     await concatFinal(job, onProgress);
     await validateOutput(job, onProgress);
@@ -444,6 +558,10 @@ export async function runRenderStage(job: Job, onProgress?: RenderProgressCallba
           stderr: stderrTail(caught),
         });
     const jobError = failSubstage(job, error);
+    if (error.substage === "SUBTITLE_GENERATION" || error.substage === "SUBTITLE_BURN") {
+      job.subtitle.status = "FAILED";
+      job.subtitle.error = jobError;
+    }
     job.render.status = "FAILED";
     failStage(job, "RENDER", jobError);
     saveJob(job);

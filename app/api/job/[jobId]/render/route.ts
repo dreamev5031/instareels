@@ -24,6 +24,16 @@ export async function POST(
   if (job.stages.VALIDATE.status !== "SUCCESS" || job.validation?.status !== "PASS") {
     return Response.json({ stage: "RENDER", error_code: "RENDER_VALIDATE_REQUIRED", message: "VALIDATE PASS 상태의 JOB만 렌더할 수 있습니다.", job }, { status: 409 });
   }
+  if (job.subtitle.settings.enabled && (job.subtitle.status !== "SUCCESS" || job.subtitle.segments.length === 0)) {
+    return Response.json({
+      stage: "RENDER",
+      substage: "SUBTITLE_GENERATION",
+      error_code: "SUBTITLE_TIMING_FAILED",
+      message: "자막 설정을 저장해 확정된 segment를 만든 뒤 렌더해 주세요.",
+      context: { subtitle_status: job.subtitle.status, segment_count: job.subtitle.segments.length },
+      job,
+    }, { status: 409 });
+  }
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {

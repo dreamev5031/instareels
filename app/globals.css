@@ -1,4 +1,14 @@
 @import "tailwindcss";
+@import "@noonnu/nanum-square-round";
+@import "pretendard/dist/web/static/pretendard.css";
+@import "@noonnu/noto-sans-kr";
+@import "@noonnu/gmarket-sans-medium";
+@import "@noonnu/tmoney-round-wind-extra-bold";
+@import "@kfonts/bm-dohyeon";
+@import "@kfonts/bm-hanna-pro";
+@import "@kfonts/bm-jua";
+@import "@noonnu/cafe24-dangdanghae";
+@import "@noonnu/yg-jalnan";
 
 @font-face {
   font-family: "SCoreDreamExtraBold";
@@ -48,6 +58,24 @@ button,
 select {
   font-family: inherit;
 }
+
+.subtitle-preview-effect { animation-duration: 1.15s; animation-timing-function: ease-out; animation-iteration-count: infinite; }
+.subtitle-effect-typewriter,.subtitle-effect-rushed_typing { animation-name: subtitle-reveal; }
+.subtitle-effect-copybook { animation-name: subtitle-copybook; }
+.subtitle-effect-flat_popout,.subtitle-effect-word_zoom { animation-name: subtitle-pop; }
+.subtitle-effect-breeze { animation-name: subtitle-breeze; }
+.subtitle-effect-transparent_gradient { animation-name: subtitle-gradient; }
+.subtitle-effect-pink_blink { animation-name: subtitle-pink; }
+.subtitle-effect-easy_slide { animation-name: subtitle-slide; }
+.subtitle-cursor { animation: subtitle-cursor .5s steps(1) infinite; }
+@keyframes subtitle-reveal { 0% { clip-path: inset(0 100% 0 0); } 85%,100% { clip-path: inset(0); } }
+@keyframes subtitle-copybook { 0% { opacity:0; transform:translateY(12px); filter:blur(2px); } 50%,100% { opacity:1; transform:none; filter:none; } }
+@keyframes subtitle-pop { 0% { opacity:0; transform:scale(.3); } 45% { opacity:1; transform:scale(1.14); } 70%,100% { transform:scale(1); } }
+@keyframes subtitle-breeze { 0% { opacity:0; transform:translateX(10px); filter:blur(2px); } 55%,100% { opacity:1; transform:none; filter:none; } }
+@keyframes subtitle-gradient { 0% { opacity:0; mask-image:linear-gradient(90deg,#000 0%,transparent 0%); } 70%,100% { opacity:1; mask-image:linear-gradient(90deg,#000 100%,transparent 100%); } }
+@keyframes subtitle-pink { 0%,100% { color:inherit; } 45% { color:#ff4fb3; } }
+@keyframes subtitle-slide { 0% { opacity:0; transform:translateX(28px); } 55%,100% { opacity:1; transform:none; } }
+@keyframes subtitle-cursor { 0%,49% { opacity:1; } 50%,100% { opacity:0; } }
 
 button,
 label,
