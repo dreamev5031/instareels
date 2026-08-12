@@ -38,6 +38,7 @@ export default function FailureView({ job, stage, onRetry, retrying }: Props) {
           <ul className="mt-1 list-disc pl-4 text-[var(--text-muted)]">
             <li>{breakdown.ocr_blocked}개 OCR 제외</li>
             <li>{breakdown.already_used}개 이미 사용</li>
+            <li>{breakdown.same_source_policy}개 연속 SOURCE 정책 제외</li>
             <li>{breakdown.too_short}개 길이 부족</li>
             <li>{breakdown.available}개 사용 가능</li>
           </ul>

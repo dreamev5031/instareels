@@ -30,7 +30,22 @@ export function runValidateStage(job: Job): void {
       detail: { totalSceneDuration, ttsDuration, tolerance },
     });
 
-    // 2. duplicate clip_id
+    // 2. sequential SCENE identifiers
+    const sceneIdMismatches = scenes.flatMap((scene, index) => {
+      const expected = `SCENE_${String(index + 1).padStart(3, "0")}`;
+      return scene.scene_id === expected ? [] : [{ actual: scene.scene_id, expected }];
+    });
+    checks.push({
+      code: "SCENE_ID_SEQUENCE",
+      passed: sceneIdMismatches.length === 0,
+      message:
+        sceneIdMismatches.length === 0
+          ? "SCENE 번호가 순서대로 부여되었습니다."
+          : `SCENE 번호가 순서와 맞지 않습니다: ${sceneIdMismatches.map((m) => `${m.actual}→${m.expected}`).join(", ")}`,
+      detail: { sceneIdMismatches },
+    });
+
+    // 3. duplicate clip_id
     const clipCounts = new Map<string, number>();
     for (const s of scenes) clipCounts.set(s.clip_id, (clipCounts.get(s.clip_id) ?? 0) + 1);
     const duplicateClips = [...clipCounts.entries()].filter(([, count]) => count > 1);
@@ -44,7 +59,7 @@ export function runValidateStage(job: Job): void {
       detail: { duplicateClips },
     });
 
-    // 3. duplicate/overlapping source range
+    // 4. duplicate/overlapping source range
     const rangeOverlaps: string[] = [];
     const bySource = new Map<string, typeof scenes>();
     for (const s of scenes) {
@@ -72,7 +87,7 @@ export function runValidateStage(job: Job): void {
       detail: { rangeOverlaps },
     });
 
-    // 4. OCR blocked usage
+    // 5. OCR blocked usage
     const blockedUsages: string[] = [];
     for (const s of scenes) {
       const segments = job.ocr[s.source_id] ?? [];
@@ -92,7 +107,7 @@ export function runValidateStage(job: Job): void {
       detail: { blockedUsages },
     });
 
-    // 5. consecutive same-source usage
+    // 6. consecutive same-source usage
     let maxRun = 0;
     let currentRun = 0;
     let lastSource: string | null = null;
@@ -115,7 +130,7 @@ export function runValidateStage(job: Job): void {
       detail: { maxRun },
     });
 
-    // 6. source usage ratio (overuse)
+    // 7. source usage ratio (overuse)
     const sourceUsage: Record<string, { total_duration: number; ratio: number; scene_count: number }> = {};
     for (const [sourceId, list] of bySource) {
       const total = list.reduce((sum, s) => sum + s.duration, 0);
@@ -129,20 +144,37 @@ export function runValidateStage(job: Job): void {
     const overusedSources = Object.entries(sourceUsage).filter(
       ([, u]) => u.ratio > SOURCE_OVERUSE_RATIO
     );
-    const overuseApplicable = job.sources.length >= 2;
+    const safeSourceCount = new Set(job.clips.map((clip) => clip.source_id)).size;
+    const overuseApplicable = safeSourceCount >= 2;
+    const overuseViolations = overusedSources.flatMap(([sourceId, usage]) => {
+      const unusedAlternatives = job.clips.filter(
+        (clip) => clip.source_id !== sourceId && !clip.used
+      );
+      return unusedAlternatives.length > 0
+        ? [{ sourceId, usage, unused_alternative_clips: unusedAlternatives.map((clip) => clip.clip_id) }]
+        : [];
+    });
     checks.push({
       code: "SOURCE_OVERUSE",
-      passed: !overuseApplicable || overusedSources.length === 0,
+      passed: !overuseApplicable || overuseViolations.length === 0,
       message:
-        !overuseApplicable || overusedSources.length === 0
+        !overuseApplicable || overuseViolations.length === 0
           ? "특정 SOURCE에 사용 시간이 몰리지 않았습니다."
-          : overusedSources
-              .map(([id, u]) => `${id} 사용률 ${(u.ratio * 100).toFixed(0)}% (허용 기준 ${SOURCE_OVERUSE_RATIO * 100}% 초과)`)
+          : overuseViolations
+              .map(({ sourceId, usage }) => `${sourceId} 사용률 ${(usage.ratio * 100).toFixed(0)}% (허용 기준 ${SOURCE_OVERUSE_RATIO * 100}% 초과)`)
               .join(", "),
-      detail: { sourceUsage, threshold: SOURCE_OVERUSE_RATIO },
+      detail: {
+        sourceUsage,
+        threshold: SOURCE_OVERUSE_RATIO,
+        safeSourceCount,
+        overuseViolations,
+        unavoidableOveruse: overusedSources
+          .filter(([sourceId]) => !overuseViolations.some((v) => v.sourceId === sourceId))
+          .map(([sourceId]) => sourceId),
+      },
     });
 
-    // 7. empty timeline gaps
+    // 8. empty timeline gaps
     const gaps: string[] = [];
     const sortedScenes = [...scenes].sort((a, b) => a.timeline_start - b.timeline_start);
     for (let i = 0; i < sortedScenes.length - 1; i++) {

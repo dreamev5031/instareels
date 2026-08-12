@@ -120,6 +120,9 @@ export function failStage(job: Job, stage: StageName, error: JobError): void {
   };
   addLog(job, stage, "error", error.message, {
     error_code: error.error_code,
+    source_id: error.source_id,
+    clip_id: error.clip_id,
+    scene_id: error.scene_id,
     ...error.context,
   });
 }

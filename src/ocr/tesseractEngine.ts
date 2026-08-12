@@ -11,7 +11,10 @@ export class TesseractOcrEngine implements OcrEngine {
     // for downloaded language trained-data, which may not be writable in a
     // container and pollutes the app directory even when it is.
     fs.mkdirSync(OCR_CACHE_DIR, { recursive: true });
-    const worker = await createWorker("chi_sim+eng", undefined, { cachePath: OCR_CACHE_DIR });
+    // Keep English first. With the current tesseract.js/core combination,
+    // `chi_sim+eng` initializes only the fallback language and prints a
+    // traineddata load error, while `eng+chi_sim` loads both models cleanly.
+    const worker = await createWorker("eng+chi_sim", undefined, { cachePath: OCR_CACHE_DIR });
     // Without an explicit PSM, tesseract.js falls back to a mode that
     // aggressively hunts for text everywhere in the frame, which hallucinates
     // CJK-looking glyphs out of ordinary photo texture/noise (verified against

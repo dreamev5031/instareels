@@ -36,6 +36,7 @@ export type ErrorCode =
   | "OCR_BLOCKED_USED"
   | "EMPTY_TIMELINE_GAP"
   | "CONSECUTIVE_SOURCE_LIMIT"
+  | "SCENE_ID_SEQUENCE"
   | "DURATION_MISMATCH";
 
 export interface JobError {
@@ -137,8 +138,25 @@ export interface AllocationCandidateBreakdown {
   total_clips_on_sources: number;
   ocr_blocked: number;
   already_used: number;
+  same_source_policy: number;
   too_short: number;
   available: number;
+}
+
+export interface AllocationDecision {
+  scene_id: string;
+  selected_source_id: string;
+  selected_clip_id: string;
+  selected_clip_duration: number;
+  allocated_duration: number;
+  remaining_before: number;
+  source_used_duration_before: number;
+  source_used_duration_after: number;
+  source_scene_count_before: number;
+  previous_source_id: string | null;
+  candidate_count: number;
+  eligible_candidate_count: number;
+  selection_policy: "FIRST_SCENE_BALANCE" | "AVOID_PREVIOUS_SOURCE" | "ONLY_AVAILABLE_SOURCE";
 }
 
 export interface ValidationCheck {
@@ -169,6 +187,7 @@ export interface Job {
   ocr: Record<string, OcrSegment[]>;
   clips: Clip[];
   scenes: Scene[];
+  allocation_decisions?: AllocationDecision[];
   validation?: ValidationResult;
   logs: JobLogEntry[];
 }

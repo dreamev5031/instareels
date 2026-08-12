@@ -67,6 +67,31 @@ export default function DebugPanel({ job }: { job: Job }) {
           </div>
         )}
 
+        {job.allocation_decisions && job.allocation_decisions.length > 0 && (
+          <div>
+            <p className="mb-1 text-xs font-semibold text-[var(--text-muted)]">배정 선택 근거</p>
+            <ul className="flex flex-col gap-1.5">
+              {job.allocation_decisions.map((decision) => (
+                <li key={decision.scene_id} className="min-w-0 rounded bg-gray-50 px-2 py-1.5 text-[11px]">
+                  <div className="flex min-w-0 items-center gap-1.5">
+                    <span className="shrink-0 font-mono font-semibold">{decision.scene_id}</span>
+                    <span className="truncate font-mono text-[var(--primary)]">
+                      {decision.selected_clip_id}
+                    </span>
+                    <span className="ml-auto shrink-0 tabular-nums text-[var(--text-muted)]">
+                      {decision.allocated_duration.toFixed(2)}초
+                    </span>
+                  </div>
+                  <p className="mt-0.5 break-words text-[var(--text-muted)]">
+                    이전 {decision.previous_source_id ?? "없음"} · 후보 {decision.candidate_count}개 ·
+                    선택 가능 {decision.eligible_candidate_count}개 · 누적 {decision.source_used_duration_after.toFixed(2)}초
+                  </p>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
         {job.validation && (
           <div>
             <p className="mb-1 text-xs font-semibold text-[var(--text-muted)]">검증 항목</p>
