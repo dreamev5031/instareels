@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { jobExists, loadJob, saveJob } from "@/jobs/store";
 import { runUploadStage } from "@/upload";
 import { PipelineError } from "@/shared/types";
+import { assertTtsReady } from "@/jobs/preconditions";
 
 export async function POST(req: Request) {
   const formData = await req.formData();
@@ -14,10 +15,14 @@ export async function POST(req: Request) {
   }
 
   const job = loadJob(jobId);
-  if (job.stages.TTS.status !== "SUCCESS") {
+  try {
+    assertTtsReady(job, "UPLOAD");
+  } catch (error) {
+    saveJob(job);
+    const pipelineError = error as PipelineError;
     return NextResponse.json(
-      { error: "TTS_NOT_READY", message: "TTS가 성공적으로 생성된 뒤 영상을 업로드할 수 있습니다." },
-      { status: 400 }
+      { stage: "UPLOAD", error: "TTS_REQUIRED", error_code: "TTS_REQUIRED", message: pipelineError.message, job },
+      { status: 409 }
     );
   }
   if (job.stages.COVER.status !== "SUCCESS") {
@@ -26,6 +31,7 @@ export async function POST(req: Request) {
       { status: 400 }
     );
   }
+  job.ocr_enabled = formData.get("ocrEnabled") === "true";
 
   const fileEntries = formData.getAll("files").filter((f): f is File => f instanceof File);
   const files: { originalFilename: string; buffer: Buffer }[] = [];

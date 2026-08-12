@@ -4,6 +4,7 @@ import { Job, PipelineError, SourceVideo } from "@/shared/types";
 import { extractThumbnail, probeMedia } from "@/shared/ffmpeg";
 import { jobSourcesDir, jobThumbsDir } from "@/jobs/paths";
 import { addLog, failStage, resetDownstreamStages, startStage, succeedStage } from "@/jobs/store";
+import { assertTtsReady } from "@/jobs/preconditions";
 
 const SUPPORTED_EXTENSIONS = new Set([".mp4", ".mov", ".m4v", ".webm", ".mkv"]);
 
@@ -24,6 +25,7 @@ export async function runUploadStage(
   files: { originalFilename: string; buffer: Buffer }[],
   dependencyOverrides: Partial<UploadStageDependencies> = {}
 ): Promise<void> {
+  assertTtsReady(job, "UPLOAD");
   const dependencies = { ...DEFAULT_DEPENDENCIES, ...dependencyOverrides };
   resetDownstreamStages(job, "UPLOAD");
   startStage(job, "UPLOAD");

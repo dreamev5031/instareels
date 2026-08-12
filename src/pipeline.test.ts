@@ -18,12 +18,14 @@ function makeJob(ttsDuration = 0): Job {
   const stages = Object.fromEntries(
     STAGE_ORDER.map((stage) => [stage, { status: "PENDING" as StageStatus }])
   ) as Job["stages"];
+  if (ttsDuration > 0) stages.TTS = { status: "SUCCESS" };
   return {
     job_id: `JOB_TEST_${jobSequence}`,
     created_at: now,
     updated_at: now,
     stages,
     cover: createDefaultCoverSettings(),
+    ocr_enabled: false,
     tts:
       ttsDuration > 0
         ? { status: "success", text: "test", voice: "ko-KR-SunHiNeural", file: "tts.mp3", duration: ttsDuration }
@@ -157,6 +159,7 @@ test("C: a single source may repeat, but clips and ranges never do", () => {
 
 test("D: OCR blocked ranges are never converted into allocated clips", () => {
   const job = makeJob(4);
+  job.ocr_enabled = true;
   addSource(job, "SOURCE_001", 6);
   job.ocr.SOURCE_001 = [
     { start: 0, end: 4, ocr_safe: false, reason: "TEXT_DETECTED", confidence: 95 },
@@ -214,6 +217,7 @@ test("G: allocator never reuses a clip and records every successful selection", 
 
 test("H: OCR engine failure identifies stage, source, and frame", async () => {
   const job = makeJob(2);
+  job.ocr_enabled = true;
   addSource(job, "SOURCE_001", 2);
   const fakeEngine = {
     async recognize() {
@@ -282,4 +286,95 @@ test("J: ffprobe failure identifies the upload stage and source", async () => {
   assert.equal(job.stages.UPLOAD.status, "FAILED");
   assert.equal(job.stages.UPLOAD.error?.source_id, "SOURCE_001");
   assert.match(String(job.stages.UPLOAD.error?.context?.error), /simulated ffprobe failure/);
+});
+
+test("M: every analysis stage rejects a JOB without a completed TTS", async () => {
+  const ocrJob = makeJob();
+  await assert.rejects(runOcrStage(ocrJob), (error: unknown) => {
+    assert.ok(error instanceof PipelineError);
+    assert.equal(error.code, "TTS_REQUIRED");
+    return true;
+  });
+  assert.equal(ocrJob.stages.OCR.status, "FAILED");
+  assert.equal(ocrJob.stages.OCR.error?.error_code, "TTS_REQUIRED");
+
+  const stages = [
+    ["CLIP", runClipStage],
+    ["ALLOCATE", runAllocateStage],
+    ["VALIDATE", runValidateStage],
+  ] as const;
+  for (const [stage, run] of stages) {
+    const job = makeJob();
+    assert.throws(() => run(job), (error: unknown) => {
+      assert.ok(error instanceof PipelineError);
+      assert.equal(error.code, "TTS_REQUIRED");
+      return true;
+    });
+    assert.equal(job.stages[stage].status, "FAILED");
+    assert.equal(job.stages[stage].error?.error_code, "TTS_REQUIRED");
+  }
+});
+
+test("N: OCR OFF skips the engine, marks the full source SAFE, and validates normally", async () => {
+  const job = makeJob(2);
+  addSource(job, "SOURCE_001", 3);
+  let engineCreated = false;
+  let framesExtracted = false;
+
+  await runOcrStage(job, undefined, {
+    createEngine: () => {
+      engineCreated = true;
+      throw new Error("OCR engine must not be created while disabled");
+    },
+    extractFrames: async () => {
+      framesExtracted = true;
+      return [];
+    },
+  });
+
+  assert.equal(engineCreated, false);
+  assert.equal(framesExtracted, false);
+  assert.equal(job.stages.OCR.status, "SKIPPED");
+  assert.equal(job.stages.OCR.skipReason, "DISABLED_BY_USER");
+  assert.deepEqual(job.ocr.SOURCE_001, [{ start: 0, end: 3, ocr_safe: true }]);
+
+  runClipStage(job);
+  runAllocateStage(job);
+  runValidateStage(job);
+  assert.equal(job.validation?.status, "PASS");
+  const ocrCheck = job.validation?.checks.find((check) => check.code === "OCR_BLOCKED_USED");
+  assert.equal(ocrCheck?.skipped, true);
+  assert.equal(ocrCheck?.skip_reason, "DISABLED_BY_USER");
+});
+
+test("O: OCR ON runs the engine, blocks detected text, and allocates SAFE ranges only", async () => {
+  const job = makeJob(1);
+  job.ocr_enabled = true;
+  addSource(job, "SOURCE_001", 2);
+  let recognitionCount = 0;
+  const fakeEngine = {
+    async recognize() {
+      recognitionCount += 1;
+      return recognitionCount === 1
+        ? { rawText: "中文", confidence: 98 }
+        : { rawText: "", confidence: 99 };
+    },
+    async dispose() {},
+  };
+
+  await runOcrStage(job, undefined, {
+    createEngine: () => fakeEngine,
+    extractFrames: async () => ["frame_00001.jpg", "frame_00002.jpg"],
+  });
+
+  assert.equal(recognitionCount, 2);
+  assert.equal(job.stages.OCR.status, "SUCCESS");
+  assert.equal(job.ocr.SOURCE_001?.filter((segment) => !segment.ocr_safe).length, 1);
+
+  runClipStage(job);
+  assert.ok(job.clips.every((clip) => clip.source_start >= 1));
+  runAllocateStage(job);
+  runValidateStage(job);
+  assert.equal(job.validation?.status, "PASS");
+  assert.equal(job.validation?.checks.find((check) => check.code === "OCR_BLOCKED_USED")?.skipped, undefined);
 });

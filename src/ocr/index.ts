@@ -2,7 +2,8 @@ import fs from "node:fs/promises";
 import { Job, OcrBlockReason, OcrSegment, PipelineError } from "@/shared/types";
 import { extractFrames } from "@/shared/ffmpeg";
 import { jobFramesDir } from "@/jobs/paths";
-import { addLog, failStage, resetDownstreamStages, startStage, succeedStage } from "@/jobs/store";
+import { addLog, failStage, resetDownstreamStages, skipStage, startStage, succeedStage } from "@/jobs/store";
+import { assertTtsReady } from "@/jobs/preconditions";
 import { OcrEngine } from "./engine";
 import { TesseractOcrEngine } from "./tesseractEngine";
 
@@ -121,12 +122,12 @@ export async function runOcrStage(
   onProgress?: OcrProgressCallback,
   dependencyOverrides: Partial<OcrStageDependencies> = {}
 ): Promise<void> {
+  assertTtsReady(job, "OCR");
   const dependencies = { ...DEFAULT_DEPENDENCIES, ...dependencyOverrides };
   resetDownstreamStages(job, "OCR");
-  startStage(job, "OCR");
-  onProgress?.(job);
 
   if (!job.sources.length) {
+    startStage(job, "OCR");
     const error = {
       stage: "OCR" as const,
       error_code: "OCR_NO_SOURCES" as const,
@@ -136,6 +137,28 @@ export async function runOcrStage(
     failStage(job, "OCR", error);
     throw new PipelineError("OCR", "OCR_NO_SOURCES", error.message);
   }
+
+  if (!job.ocr_enabled) {
+    job.ocr = {};
+    for (const source of job.sources) {
+      job.ocr[source.source_id] = [{
+        start: 0,
+        end: source.duration,
+        ocr_safe: true,
+      }];
+      source.status = "ANALYZED";
+    }
+    skipStage(job, "OCR", "DISABLED_BY_USER");
+    addLog(job, "OCR", "info", "중국어 검사를 건너뜁니다. 전체 영상을 SAFE로 사용합니다.", {
+      reason: "DISABLED_BY_USER",
+      source_count: job.sources.length,
+    });
+    onProgress?.(job);
+    return;
+  }
+
+  startStage(job, "OCR");
+  onProgress?.(job);
 
   const engine = dependencies.createEngine();
   try {

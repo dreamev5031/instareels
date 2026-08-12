@@ -17,9 +17,10 @@ export const STAGE_ORDER: StageName[] = [
   "VALIDATE",
 ];
 
-export type StageStatus = "PENDING" | "RUNNING" | "SUCCESS" | "FAILED";
+export type StageStatus = "PENDING" | "RUNNING" | "SUCCESS" | "SKIPPED" | "FAILED";
 
 export type ErrorCode =
+  | "TTS_REQUIRED"
   | "TTS_EMPTY_TEXT"
   | "TTS_GENERATION_FAILED"
   | "TTS_PROBE_FAILED"
@@ -120,6 +121,7 @@ export interface StageState {
   status: StageStatus;
   startedAt?: string;
   finishedAt?: string;
+  skipReason?: "DISABLED_BY_USER";
   error?: JobError;
 }
 
@@ -220,6 +222,8 @@ export interface AllocationDecision {
 export interface ValidationCheck {
   code: ErrorCode;
   passed: boolean;
+  skipped?: boolean;
+  skip_reason?: "DISABLED_BY_USER";
   message: string;
   detail?: Record<string, unknown>;
 }
@@ -242,6 +246,7 @@ export interface Job {
   stages: Record<StageName, StageState>;
   tts?: TtsResult;
   cover: CoverSettings;
+  ocr_enabled: boolean;
   sources: SourceVideo[];
   ocr: Record<string, OcrSegment[]>;
   clips: Clip[];

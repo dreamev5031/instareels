@@ -1,5 +1,6 @@
 import { Clip, Job, PipelineError } from "@/shared/types";
 import { addLog, failStage, resetDownstreamStages, startStage, succeedStage } from "@/jobs/store";
+import { assertTtsReady } from "@/jobs/preconditions";
 
 const MIN_CLIP_DURATION = 0.4;
 const MAX_CLIP_DURATION = 2.2;
@@ -23,6 +24,7 @@ function splitSafeSegment(start: number, end: number): { start: number; end: num
 }
 
 export function runClipStage(job: Job): void {
+  assertTtsReady(job, "CLIP");
   resetDownstreamStages(job, "CLIP");
   startStage(job, "CLIP");
 

@@ -25,9 +25,10 @@ export async function generateTts(jobId: string | null, text: string, voice: str
   return parseJobResponse(res);
 }
 
-export async function uploadVideos(jobId: string, files: File[]): Promise<Job> {
+export async function uploadVideos(jobId: string, files: File[], ocrEnabled: boolean): Promise<Job> {
   const formData = new FormData();
   formData.append("jobId", jobId);
+  formData.append("ocrEnabled", String(ocrEnabled));
   for (const f of files) formData.append("files", f);
   const res = await fetch(`${API_BASE_URL}/api/upload`, { method: "POST", body: formData });
   return parseJobResponse(res);
@@ -46,11 +47,15 @@ export async function saveCover(
   return parseJobResponse(res);
 }
 
-export async function runAnalysis(jobId: string, onProgress: (job: Job) => void): Promise<Job> {
+export async function runAnalysis(
+  jobId: string,
+  ocrEnabled: boolean,
+  onProgress: (job: Job) => void
+): Promise<Job> {
   const res = await fetch(`${API_BASE_URL}/api/analyze`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ jobId }),
+    body: JSON.stringify({ jobId, ocrEnabled }),
   });
 
   if (!res.ok || !res.body) {

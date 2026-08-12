@@ -8,6 +8,7 @@ import {
   Scene,
 } from "@/shared/types";
 import { addLog, failStage, resetDownstreamStages, startStage, succeedStage } from "@/jobs/store";
+import { assertTtsReady } from "@/jobs/preconditions";
 
 const FINISH_EPSILON = 0.001;
 const MIN_CLIP_DURATION = 0.4;
@@ -41,6 +42,7 @@ function computeCandidateBreakdown(
 }
 
 export function runAllocateStage(job: Job): void {
+  assertTtsReady(job, "ALLOCATE");
   resetDownstreamStages(job, "ALLOCATE");
   startStage(job, "ALLOCATE");
 
