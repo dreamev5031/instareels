@@ -2,22 +2,22 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { NextResponse } from "next/server";
 import { checkBinaryVersion } from "@/shared/ffmpeg";
-import { WORK_DIR } from "@/jobs/paths";
+import { OCR_CACHE_DIR, WORK_DIR } from "@/jobs/paths";
 
 interface CheckResult {
   ok: boolean;
   detail: string;
 }
 
-async function checkWorkDirWritable(): Promise<CheckResult> {
-  const marker = path.join(WORK_DIR, ".diagnostics-write-check");
+async function checkDirWritable(dir: string): Promise<CheckResult> {
+  const marker = path.join(dir, ".diagnostics-write-check");
   try {
-    await fs.mkdir(WORK_DIR, { recursive: true });
+    await fs.mkdir(dir, { recursive: true });
     await fs.writeFile(marker, "ok");
     await fs.unlink(marker);
-    return { ok: true, detail: WORK_DIR };
+    return { ok: true, detail: dir };
   } catch (err) {
-    return { ok: false, detail: `${WORK_DIR}: ${(err as Error).message}` };
+    return { ok: false, detail: `${dir}: ${(err as Error).message}` };
   }
 }
 
@@ -47,16 +47,25 @@ async function checkBinary(bin: "ffmpeg" | "ffprobe"): Promise<CheckResult> {
 }
 
 export async function GET() {
-  const [ffmpeg, ffprobe, workDir, tesseract, tesseractCore, msedgeTts] = await Promise.all([
+  const [ffmpeg, ffprobe, workDir, ocrCacheDir, tesseract, tesseractCore, msedgeTts] = await Promise.all([
     checkBinary("ffmpeg"),
     checkBinary("ffprobe"),
-    checkWorkDirWritable(),
+    checkDirWritable(WORK_DIR),
+    checkDirWritable(OCR_CACHE_DIR),
     checkPackagePresent("tesseract.js"),
     checkPackagePresent("tesseract.js-core"),
     checkPackagePresent("msedge-tts"),
   ]);
 
-  const checks = { ffmpeg, ffprobe, work_dir_writable: workDir, tesseract_js: tesseract, tesseract_core: tesseractCore, msedge_tts: msedgeTts };
+  const checks = {
+    ffmpeg,
+    ffprobe,
+    work_dir_writable: workDir,
+    ocr_cache_writable: ocrCacheDir,
+    tesseract_js: tesseract,
+    tesseract_core: tesseractCore,
+    msedge_tts: msedgeTts,
+  };
   const allOk = Object.values(checks).every((c) => c.ok);
 
   return NextResponse.json({ status: allOk ? "ok" : "degraded", checks }, { status: allOk ? 200 : 503 });

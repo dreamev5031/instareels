@@ -11,6 +11,16 @@ const MIN_TEXT_LENGTH = 2;
 const CHINESE_REGEX = /[一-鿿]/;
 const NOISE_CHARS_REGEX = /[\s.,\-_|~`'"!?()[\]{}:;·•。、，]/g;
 
+export interface OcrStageDependencies {
+  createEngine: () => OcrEngine;
+  extractFrames: typeof extractFrames;
+}
+
+const DEFAULT_DEPENDENCIES: OcrStageDependencies = {
+  createEngine: () => new TesseractOcrEngine(),
+  extractFrames,
+};
+
 interface FrameResult {
   safe: boolean;
   reason?: OcrBlockReason;
@@ -68,14 +78,15 @@ async function analyzeSource(
   sourceId: string,
   videoPath: string,
   duration: number,
-  engine: OcrEngine
+  engine: OcrEngine,
+  extractFramesDependency: typeof extractFrames
 ): Promise<OcrSegment[]> {
   const framesDir = jobFramesDir(job.job_id, sourceId);
   await fs.mkdir(framesDir, { recursive: true });
 
   let framePaths: string[];
   try {
-    framePaths = await extractFrames(videoPath, framesDir, SAMPLE_INTERVAL_SECONDS);
+    framePaths = await extractFramesDependency(videoPath, framesDir, SAMPLE_INTERVAL_SECONDS);
   } catch (err) {
     throw new PipelineError(
       "OCR",
@@ -105,7 +116,12 @@ async function analyzeSource(
 
 export type OcrProgressCallback = (job: Job) => void;
 
-export async function runOcrStage(job: Job, onProgress?: OcrProgressCallback): Promise<void> {
+export async function runOcrStage(
+  job: Job,
+  onProgress?: OcrProgressCallback,
+  dependencyOverrides: Partial<OcrStageDependencies> = {}
+): Promise<void> {
+  const dependencies = { ...DEFAULT_DEPENDENCIES, ...dependencyOverrides };
   resetDownstreamStages(job, "OCR");
   startStage(job, "OCR");
   onProgress?.(job);
@@ -121,14 +137,21 @@ export async function runOcrStage(job: Job, onProgress?: OcrProgressCallback): P
     throw new PipelineError("OCR", "OCR_NO_SOURCES", error.message);
   }
 
-  const engine = new TesseractOcrEngine();
+  const engine = dependencies.createEngine();
   try {
     for (const source of job.sources) {
       source.status = "ANALYZING";
       addLog(job, "OCR", "info", `${source.source_id} OCR 분석 시작`, { source_id: source.source_id });
 
       onProgress?.(job);
-      const segments = await analyzeSource(job, source.source_id, source.file, source.duration, engine);
+      const segments = await analyzeSource(
+        job,
+        source.source_id,
+        source.file,
+        source.duration,
+        engine,
+        dependencies.extractFrames
+      );
       job.ocr[source.source_id] = segments;
       source.status = "ANALYZED";
 

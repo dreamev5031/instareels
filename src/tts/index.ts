@@ -5,7 +5,25 @@ import { addLog, failStage, resetDownstreamStages, startStage, succeedStage } fr
 import { synthesizeSpeech, renameTtsFile } from "./edgeTts";
 import { isSupportedVoice } from "./voices";
 
-export async function runTtsStage(job: Job, text: string, voice: string): Promise<void> {
+export interface TtsStageDependencies {
+  synthesizeSpeech: typeof synthesizeSpeech;
+  renameTtsFile: typeof renameTtsFile;
+  probeAudioDuration: typeof probeAudioDuration;
+}
+
+const DEFAULT_DEPENDENCIES: TtsStageDependencies = {
+  synthesizeSpeech,
+  renameTtsFile,
+  probeAudioDuration,
+};
+
+export async function runTtsStage(
+  job: Job,
+  text: string,
+  voice: string,
+  dependencyOverrides: Partial<TtsStageDependencies> = {}
+): Promise<void> {
+  const dependencies = { ...DEFAULT_DEPENDENCIES, ...dependencyOverrides };
   resetDownstreamStages(job, "TTS");
   startStage(job, "TTS");
 
@@ -35,9 +53,9 @@ export async function runTtsStage(job: Job, text: string, voice: string): Promis
 
   try {
     const outDir = jobTtsDir(job.job_id);
-    const rawPath = await synthesizeSpeech(trimmed, voice, outDir);
-    const file = await renameTtsFile(rawPath, outDir);
-    const duration = await probeAudioDuration(file);
+    const rawPath = await dependencies.synthesizeSpeech(trimmed, voice, outDir);
+    const file = await dependencies.renameTtsFile(rawPath, outDir);
+    const duration = await dependencies.probeAudioDuration(file);
 
     if (!duration || duration <= 0) {
       throw new PipelineError(

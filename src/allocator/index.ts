@@ -1,5 +1,6 @@
 import {
   AllocationCandidateBreakdown,
+  AllocationDecision,
   Clip,
   Job,
   OcrSegment,
@@ -8,13 +9,13 @@ import {
 } from "@/shared/types";
 import { addLog, failStage, resetDownstreamStages, startStage, succeedStage } from "@/jobs/store";
 
-const FINISH_EPSILON = 0.2;
+const FINISH_EPSILON = 0.001;
 const MIN_CLIP_DURATION = 0.4;
 
 function computeCandidateBreakdown(
   job: Job,
   usedClipIds: Set<string>,
-  availableCount: number
+  lastSourceId: string | null
 ): AllocationCandidateBreakdown {
   const allSegments: OcrSegment[] = Object.values(job.ocr).flat();
   const ocr_blocked = allSegments.filter((s) => !s.ocr_safe).length;
@@ -22,13 +23,20 @@ function computeCandidateBreakdown(
     (s) => s.ocr_safe && s.end - s.start < MIN_CLIP_DURATION
   ).length;
   const already_used = job.clips.filter((c) => usedClipIds.has(c.clip_id)).length;
+  const unused = job.clips.filter((c) => !usedClipIds.has(c.clip_id));
+  const hasAlternativeSource =
+    lastSourceId !== null && unused.some((c) => c.source_id !== lastSourceId);
+  const same_source_policy = hasAlternativeSource
+    ? unused.filter((c) => c.source_id === lastSourceId).length
+    : 0;
 
   return {
-    total_clips_on_sources: allSegments.length,
+    total_clips_on_sources: job.clips.length + ocr_blocked + too_short,
     ocr_blocked,
     too_short,
     already_used,
-    available: availableCount,
+    same_source_policy,
+    available: unused.length - same_source_policy,
   };
 }
 
@@ -48,7 +56,32 @@ export function runAllocateStage(job: Job): void {
       );
     }
 
-    const pool: Clip[] = job.clips.map((c) => ({ ...c }));
+    const totalUsableDuration = job.clips.reduce((sum, clip) => sum + clip.duration, 0);
+    if (totalUsableDuration + FINISH_EPSILON < ttsDuration) {
+      const breakdown = computeCandidateBreakdown(job, new Set<string>(), null);
+      throw new PipelineError(
+        "ALLOCATE",
+        "INSUFFICIENT_TOTAL_DURATION",
+        `OCR SAFE 영상 길이(${totalUsableDuration.toFixed(2)}초)가 TTS 길이(${ttsDuration.toFixed(2)}초)보다 부족합니다.`,
+        {
+          scene_id: "SCENE_001",
+          context: {
+            required_duration: ttsDuration,
+            usable_duration: Math.round(totalUsableDuration * 1000) / 1000,
+            shortage: Math.round((ttsDuration - totalUsableDuration) * 1000) / 1000,
+            breakdown,
+          },
+        }
+      );
+    }
+
+    const safeSourceCount = new Set(job.clips.map((clip) => clip.source_id)).size;
+    const targetDistinctSources = Math.min(
+      safeSourceCount,
+      Math.max(1, Math.floor(ttsDuration / MIN_CLIP_DURATION))
+    );
+    const balancedSceneCap = ttsDuration / targetDistinctSources;
+
     const usedClipIds = new Set<string>();
     const sourceUsedDuration = new Map<string, number>();
     const sourceSceneCount = new Map<string, number>();
@@ -61,14 +94,16 @@ export function runAllocateStage(job: Job): void {
     let timelineCursor = 0;
     let sceneIndex = 0;
     const scenes: Scene[] = [];
+    const decisions: AllocationDecision[] = [];
+    job.allocation_decisions = decisions;
 
     while (ttsDuration - timelineCursor > FINISH_EPSILON) {
       const remaining = ttsDuration - timelineCursor;
-      const candidates = pool.filter((c) => !usedClipIds.has(c.clip_id));
+      const candidates = job.clips.filter((c) => !usedClipIds.has(c.clip_id));
 
       if (candidates.length === 0) {
         job.scenes = scenes;
-        const breakdown = computeCandidateBreakdown(job, usedClipIds, 0);
+        const breakdown = computeCandidateBreakdown(job, usedClipIds, lastSourceId);
         throw new PipelineError(
           "ALLOCATE",
           "NO_AVAILABLE_CLIP",
@@ -82,6 +117,12 @@ export function runAllocateStage(job: Job): void {
 
       const preferred = candidates.filter((c) => c.source_id !== lastSourceId);
       const eligiblePool = preferred.length > 0 ? preferred : candidates;
+      const selectionPolicy: AllocationDecision["selection_policy"] =
+        lastSourceId === null
+          ? "FIRST_SCENE_BALANCE"
+          : preferred.length > 0
+            ? "AVOID_PREVIOUS_SOURCE"
+            : "ONLY_AVAILABLE_SOURCE";
 
       // fitScore: clips that fit fully within `remaining` are preferred, smallest-first
       // (keeps scenes short so more distinct sources get rotated in rather than one
@@ -101,7 +142,8 @@ export function runAllocateStage(job: Job): void {
       });
 
       const picked = eligiblePool[0]!;
-      const effDuration = Math.round(Math.min(picked.duration, remaining) * 1000) / 1000;
+      const effDuration =
+        Math.round(Math.min(picked.duration, remaining, balancedSceneCap) * 1000) / 1000;
 
       sceneIndex += 1;
       const sceneId = `SCENE_${String(sceneIndex).padStart(3, "0")}`;
@@ -120,9 +162,31 @@ export function runAllocateStage(job: Job): void {
       };
       scenes.push(scene);
 
+      const sourceUsedBefore = sourceUsedDuration.get(picked.source_id) ?? 0;
+      const sourceSceneCountBefore = sourceSceneCount.get(picked.source_id) ?? 0;
       usedClipIds.add(picked.clip_id);
-      sourceUsedDuration.set(picked.source_id, (sourceUsedDuration.get(picked.source_id) ?? 0) + effDuration);
-      sourceSceneCount.set(picked.source_id, (sourceSceneCount.get(picked.source_id) ?? 0) + 1);
+      const sourceUsedAfter = sourceUsedBefore + effDuration;
+      sourceUsedDuration.set(picked.source_id, sourceUsedAfter);
+      sourceSceneCount.set(picked.source_id, sourceSceneCountBefore + 1);
+
+      const decision: AllocationDecision = {
+        scene_id: sceneId,
+        selected_source_id: picked.source_id,
+        selected_clip_id: picked.clip_id,
+        selected_clip_duration: picked.duration,
+        allocated_duration: effDuration,
+        remaining_before: Math.round(remaining * 1000) / 1000,
+        source_used_duration_before: Math.round(sourceUsedBefore * 1000) / 1000,
+        source_used_duration_after: Math.round(sourceUsedAfter * 1000) / 1000,
+        source_scene_count_before: sourceSceneCountBefore,
+        previous_source_id: lastSourceId,
+        candidate_count: candidates.length,
+        eligible_candidate_count: eligiblePool.length,
+        selection_policy: selectionPolicy,
+      };
+      decisions.push(decision);
+      addLog(job, "ALLOCATE", "info", `${sceneId}: ${picked.clip_id} 선택`, { ...decision });
+
       lastSourceId = picked.source_id;
       timelineCursor += effDuration;
     }

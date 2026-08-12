@@ -7,6 +7,13 @@ import { addLog, failStage, resetDownstreamStages, startStage, succeedStage } fr
 
 const SUPPORTED_EXTENSIONS = new Set([".mp4", ".mov", ".m4v", ".webm", ".mkv"]);
 
+export interface UploadStageDependencies {
+  probeMedia: typeof probeMedia;
+  extractThumbnail: typeof extractThumbnail;
+}
+
+const DEFAULT_DEPENDENCIES: UploadStageDependencies = { probeMedia, extractThumbnail };
+
 function nextSourceId(job: Job): string {
   const n = job.sources.length + 1;
   return `SOURCE_${String(n).padStart(3, "0")}`;
@@ -14,8 +21,10 @@ function nextSourceId(job: Job): string {
 
 export async function runUploadStage(
   job: Job,
-  files: { originalFilename: string; buffer: Buffer }[]
+  files: { originalFilename: string; buffer: Buffer }[],
+  dependencyOverrides: Partial<UploadStageDependencies> = {}
 ): Promise<void> {
+  const dependencies = { ...DEFAULT_DEPENDENCIES, ...dependencyOverrides };
   resetDownstreamStages(job, "UPLOAD");
   startStage(job, "UPLOAD");
 
@@ -53,7 +62,7 @@ export async function runUploadStage(
 
       let probe;
       try {
-        probe = await probeMedia(targetPath);
+        probe = await dependencies.probeMedia(targetPath);
       } catch (err) {
         throw new PipelineError(
           "UPLOAD",
@@ -65,7 +74,7 @@ export async function runUploadStage(
 
       const thumbPath = path.join(thumbsDir, `${sourceId}.jpg`);
       try {
-        await extractThumbnail(targetPath, thumbPath);
+        await dependencies.extractThumbnail(targetPath, thumbPath);
       } catch {
         // thumbnail is a UI nicety; missing thumbnail should not fail the stage
       }

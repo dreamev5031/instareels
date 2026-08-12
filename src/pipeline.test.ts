@@ -1,0 +1,243 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { runAllocateStage } from "@/allocator";
+import { runClipStage } from "@/clips";
+import { runOcrStage } from "@/ocr";
+import { STAGE_ORDER, Job, PipelineError, SourceVideo, StageStatus } from "@/shared/types";
+import { runTtsStage } from "@/tts";
+import { runUploadStage } from "@/upload";
+import { runValidateStage } from "@/validator";
+
+let jobSequence = 0;
+
+function makeJob(ttsDuration = 0): Job {
+  jobSequence += 1;
+  const now = new Date().toISOString();
+  const stages = Object.fromEntries(
+    STAGE_ORDER.map((stage) => [stage, { status: "PENDING" as StageStatus }])
+  ) as Job["stages"];
+  return {
+    job_id: `JOB_TEST_${jobSequence}`,
+    created_at: now,
+    updated_at: now,
+    stages,
+    tts:
+      ttsDuration > 0
+        ? { status: "success", text: "test", voice: "ko-KR-SunHiNeural", file: "tts.mp3", duration: ttsDuration }
+        : undefined,
+    sources: [],
+    ocr: {},
+    clips: [],
+    scenes: [],
+    logs: [],
+  };
+}
+
+function addSource(job: Job, sourceId: string, duration: number): SourceVideo {
+  const source: SourceVideo = {
+    source_id: sourceId,
+    original_filename: `${sourceId}.mp4`,
+    file: `${sourceId}.mp4`,
+    duration,
+    width: 1080,
+    height: 1920,
+    fps: 30,
+    status: "ANALYZED",
+  };
+  job.sources.push(source);
+  return source;
+}
+
+function addSafeSource(job: Job, sourceId: string, duration: number): void {
+  addSource(job, sourceId, duration);
+  job.ocr[sourceId] = [{ start: 0, end: duration, ocr_safe: true, confidence: 99 }];
+}
+
+function allocateAndValidate(job: Job): void {
+  runClipStage(job);
+  runAllocateStage(job);
+  runValidateStage(job);
+}
+
+function assertNoDuplicateAllocation(job: Job): void {
+  assert.equal(new Set(job.scenes.map((scene) => scene.clip_id)).size, job.scenes.length);
+  for (const source of job.sources) {
+    const ranges = job.scenes
+      .filter((scene) => scene.source_id === source.source_id)
+      .sort((a, b) => a.source_start - b.source_start);
+    for (let index = 0; index < ranges.length - 1; index += 1) {
+      assert.ok(ranges[index]!.source_end <= ranges[index + 1]!.source_start + 0.001);
+    }
+  }
+}
+
+test("A: short TTS rotates across multiple safe sources", () => {
+  const job = makeJob(2.5);
+  addSafeSource(job, "SOURCE_001", 4);
+  addSafeSource(job, "SOURCE_002", 4);
+  addSafeSource(job, "SOURCE_003", 4);
+
+  allocateAndValidate(job);
+
+  assert.equal(job.validation?.status, "PASS");
+  assert.equal(job.scenes.at(-1)?.timeline_end, 2.5);
+  assert.ok(new Set(job.scenes.map((scene) => scene.source_id)).size >= 2);
+  assertNoDuplicateAllocation(job);
+});
+
+test("B: long TTS fills the timeline and keeps sequential scene ids", () => {
+  const job = makeJob(10);
+  addSafeSource(job, "SOURCE_001", 6);
+  addSafeSource(job, "SOURCE_002", 6);
+  addSafeSource(job, "SOURCE_003", 6);
+
+  allocateAndValidate(job);
+
+  assert.equal(job.scenes.reduce((sum, scene) => sum + scene.duration, 0), 10);
+  assert.deepEqual(
+    job.scenes.map((scene) => scene.scene_id),
+    job.scenes.map((_, index) => `SCENE_${String(index + 1).padStart(3, "0")}`)
+  );
+  assert.equal(job.allocation_decisions?.length, job.scenes.length);
+  assertNoDuplicateAllocation(job);
+});
+
+test("C: a single source may repeat, but clips and ranges never do", () => {
+  const job = makeJob(4.5);
+  addSafeSource(job, "SOURCE_001", 6);
+
+  allocateAndValidate(job);
+
+  assert.equal(job.validation?.status, "PASS");
+  assert.ok(job.scenes.length > 1);
+  assertNoDuplicateAllocation(job);
+});
+
+test("D: OCR blocked ranges are never converted into allocated clips", () => {
+  const job = makeJob(4);
+  addSource(job, "SOURCE_001", 6);
+  job.ocr.SOURCE_001 = [
+    { start: 0, end: 4, ocr_safe: false, reason: "TEXT_DETECTED", confidence: 95 },
+    { start: 4, end: 6, ocr_safe: true, confidence: 99 },
+  ];
+  addSafeSource(job, "SOURCE_002", 6);
+
+  allocateAndValidate(job);
+
+  assert.equal(job.validation?.checks.find((check) => check.code === "OCR_BLOCKED_USED")?.passed, true);
+  assert.ok(job.scenes.filter((scene) => scene.source_id === "SOURCE_001").every((scene) => scene.source_start >= 4));
+});
+
+test("E: insufficient SAFE duration fails at ALLOCATE with actionable context", () => {
+  const job = makeJob(3);
+  addSafeSource(job, "SOURCE_001", 2);
+  runClipStage(job);
+
+  assert.throws(() => runAllocateStage(job), (error: unknown) => {
+    assert.ok(error instanceof PipelineError);
+    assert.equal(error.code, "INSUFFICIENT_TOTAL_DURATION");
+    return true;
+  });
+  assert.equal(job.stages.ALLOCATE.status, "FAILED");
+  assert.equal(job.stages.ALLOCATE.error?.context?.shortage, 1);
+});
+
+test("F: one source with many clips does not monopolize allocation while alternatives exist", () => {
+  const job = makeJob(10);
+  addSafeSource(job, "SOURCE_001", 20);
+  addSafeSource(job, "SOURCE_002", 4);
+  addSafeSource(job, "SOURCE_003", 4);
+
+  allocateAndValidate(job);
+
+  const ratios = Object.values(job.validation?.source_usage ?? {}).map((usage) => usage.ratio);
+  assert.ok(Math.max(...ratios) <= 0.6);
+  assert.equal(job.validation?.checks.find((check) => check.code === "SOURCE_OVERUSE")?.passed, true);
+});
+
+test("G: allocator never reuses a clip and records every successful selection", () => {
+  const job = makeJob(8);
+  addSafeSource(job, "SOURCE_001", 8);
+  addSafeSource(job, "SOURCE_002", 8);
+
+  allocateAndValidate(job);
+
+  assertNoDuplicateAllocation(job);
+  assert.equal(job.allocation_decisions?.length, job.scenes.length);
+  for (const decision of job.allocation_decisions ?? []) {
+    assert.ok(decision.candidate_count >= decision.eligible_candidate_count);
+    assert.ok(decision.source_used_duration_after >= decision.source_used_duration_before);
+  }
+});
+
+test("H: OCR engine failure identifies stage, source, and frame", async () => {
+  const job = makeJob(2);
+  addSource(job, "SOURCE_001", 2);
+  const fakeEngine = {
+    async recognize() {
+      throw new Error("simulated OCR failure");
+    },
+    async dispose() {},
+  };
+
+  await assert.rejects(
+    runOcrStage(job, undefined, {
+      createEngine: () => fakeEngine,
+      extractFrames: async () => ["frame_00001.jpg"],
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof PipelineError);
+      assert.equal(error.code, "OCR_ENGINE_FAILED");
+      assert.equal(error.source_id, "SOURCE_001");
+      return true;
+    }
+  );
+  assert.equal(job.stages.OCR.status, "FAILED");
+  assert.equal(job.sources[0]?.status, "FAILED");
+  assert.equal(job.stages.OCR.error?.context?.frame, "frame_00001.jpg");
+});
+
+test("I: TTS generation failure remains visible as a TTS stage error", async () => {
+  const job = makeJob();
+
+  await assert.rejects(
+    runTtsStage(job, "테스트 나레이션", "ko-KR-SunHiNeural", {
+      synthesizeSpeech: async () => {
+        throw new Error("simulated Edge TTS failure");
+      },
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof PipelineError);
+      assert.equal(error.code, "TTS_GENERATION_FAILED");
+      return true;
+    }
+  );
+  assert.equal(job.stages.TTS.status, "FAILED");
+  assert.match(job.stages.TTS.error?.message ?? "", /simulated Edge TTS failure/);
+});
+
+test("J: ffprobe failure identifies the upload stage and source", async () => {
+  const job = makeJob(2);
+
+  await assert.rejects(
+    runUploadStage(
+      job,
+      [{ originalFilename: "broken.mp4", buffer: Buffer.from("not-video") }],
+      {
+        probeMedia: async () => {
+          throw new Error("simulated ffprobe failure");
+        },
+        extractThumbnail: async () => {},
+      }
+    ),
+    (error: unknown) => {
+      assert.ok(error instanceof PipelineError);
+      assert.equal(error.code, "UPLOAD_PROBE_FAILED");
+      assert.equal(error.source_id, "SOURCE_001");
+      return true;
+    }
+  );
+  assert.equal(job.stages.UPLOAD.status, "FAILED");
+  assert.equal(job.stages.UPLOAD.error?.source_id, "SOURCE_001");
+  assert.match(String(job.stages.UPLOAD.error?.context?.error), /simulated ffprobe failure/);
+});
