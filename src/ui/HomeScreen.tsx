@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Job, STAGE_ORDER, StageName } from "@/shared/types";
-import { generateTts, runAnalysis, saveCover, uploadVideos } from "./api";
+import { generateTts, renderVideo, runAnalysis, saveCover, uploadVideos } from "./api";
 import { DEFAULT_VOICE } from "@/tts/voices";
 import TtsStep from "./components/TtsStep";
 import UploadStep from "./components/UploadStep";
@@ -12,6 +12,7 @@ import FailureView from "./components/FailureView";
 import CoverStep from "./components/CoverStep";
 import WorkflowSteps from "./components/WorkflowSteps";
 import type { CoverSettings } from "@/shared/types";
+import RenderPanel from "./components/RenderPanel";
 
 export default function HomeScreen() {
   const [job, setJob] = useState<Job | null>(null);
@@ -25,6 +26,7 @@ export default function HomeScreen() {
   const [ocrEnabled, setOcrEnabled] = useState(false);
   const [uploadLoading, setUploadLoading] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
+  const [rendering, setRendering] = useState(false);
   const [requestError, setRequestError] = useState<string | null>(null);
 
   const failedStage: StageName | null = job
@@ -89,12 +91,28 @@ export default function HomeScreen() {
     }
   }
 
+  async function handleRender() {
+    if (!job) return;
+    setRendering(true);
+    setRequestError(null);
+    try {
+      const rendered = await renderVideo(job.job_id, (snapshot) => setJob(snapshot));
+      setJob(rendered);
+    } catch (err) {
+      setRequestError((err as Error).message);
+    } finally {
+      setRendering(false);
+    }
+  }
+
   function handleRetry() {
     if (!failedStage) return;
     if (failedStage === "TTS") {
       handleGenerateTts();
     } else if (failedStage === "UPLOAD") {
       handleUpload(selectedFiles);
+    } else if (failedStage === "RENDER") {
+      handleRender();
     } else {
       handleAnalyze();
     }
@@ -106,7 +124,7 @@ export default function HomeScreen() {
   const showAnalyzeButton = Boolean(ttsDone && uploadDone && coverDone && !coverDirty && !analyzing && job?.stages.VALIDATE.status !== "SUCCESS" && !failedStage);
   const pipelineStarted =
     analyzing ||
-    (job && ["OCR", "CLIP", "ALLOCATE", "VALIDATE"].some((s) => job.stages[s as StageName].status !== "PENDING"));
+    (job && ["OCR", "CLIP", "ALLOCATE", "VALIDATE", "RENDER"].some((s) => job.stages[s as StageName].status !== "PENDING"));
   const showResult = job?.stages.VALIDATE.status === "SUCCESS";
 
   return (
@@ -161,9 +179,14 @@ export default function HomeScreen() {
 
         {pipelineStarted && job && <ProgressView job={job} />}
 
-        {failedStage && job && <FailureView job={job} stage={failedStage} onRetry={handleRetry} retrying={ttsLoading || coverSaving || uploadLoading || analyzing} />}
+        {failedStage && job && <FailureView job={job} stage={failedStage} onRetry={handleRetry} retrying={ttsLoading || coverSaving || uploadLoading || analyzing || rendering} />}
 
-        {showResult && job && <ResultSummary job={job} />}
+        {showResult && job && (
+          <>
+            <ResultSummary job={job} />
+            <RenderPanel job={job} rendering={rendering} onRender={handleRender} />
+          </>
+        )}
       </div>
     </main>
   );

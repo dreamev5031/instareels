@@ -4,6 +4,22 @@ import path from "node:path";
 const FFMPEG_BIN = process.env.FFMPEG_PATH || "ffmpeg";
 const FFPROBE_BIN = process.env.FFPROBE_PATH || "ffprobe";
 
+export class MediaCommandError extends Error {
+  bin: string;
+  args: string[];
+  stderr: string;
+  exitCode: number | null;
+
+  constructor(bin: string, args: string[], stderr: string, exitCode: number | null, cause?: Error) {
+    super(cause?.message ?? `${bin} exited with code ${exitCode}: ${stderr.slice(-2000)}`);
+    this.name = "MediaCommandError";
+    this.bin = bin;
+    this.args = args;
+    this.stderr = stderr;
+    this.exitCode = exitCode;
+  }
+}
+
 function run(bin: string, args: string[]): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     const proc = spawn(bin, args);
@@ -11,12 +27,20 @@ function run(bin: string, args: string[]): Promise<{ stdout: string; stderr: str
     let stderr = "";
     proc.stdout.on("data", (d) => (stdout += d.toString()));
     proc.stderr.on("data", (d) => (stderr += d.toString()));
-    proc.on("error", (err) => reject(err));
+    proc.on("error", (err) => reject(new MediaCommandError(bin, args, stderr, null, err)));
     proc.on("close", (code) => {
       if (code === 0) resolve({ stdout, stderr });
-      else reject(new Error(`${bin} exited with code ${code}: ${stderr.slice(-2000)}`));
+      else reject(new MediaCommandError(bin, args, stderr, code));
     });
   });
+}
+
+export function runFfmpeg(args: string[]): Promise<{ stdout: string; stderr: string }> {
+  return run(FFMPEG_BIN, args);
+}
+
+export function runFfprobe(args: string[]): Promise<{ stdout: string; stderr: string }> {
+  return run(FFPROBE_BIN, args);
 }
 
 /** Confirms a binary (ffmpeg/ffprobe) is on PATH and runnable; returns its
@@ -32,6 +56,8 @@ export interface ProbeResult {
   width: number;
   height: number;
   fps: number;
+  codecName: string;
+  containerFormat: string;
 }
 
 export async function probeMedia(filePath: string): Promise<ProbeResult> {
@@ -46,17 +72,62 @@ export async function probeMedia(filePath: string): Promise<ProbeResult> {
   ]);
   const data = JSON.parse(stdout);
   const videoStream = (data.streams || []).find((s: any) => s.codec_type === "video");
+  if (!videoStream) throw new Error("ffprobe 결과에 비디오 스트림이 없습니다.");
   const duration = parseFloat(data.format?.duration ?? videoStream?.duration ?? "0") || 0;
   let fps = 0;
   if (videoStream?.avg_frame_rate && videoStream.avg_frame_rate !== "0/0") {
     const [num, den] = videoStream.avg_frame_rate.split("/").map(Number);
     fps = den ? num / den : num;
   }
-  return {
+  const result = {
     duration,
     width: videoStream?.width ?? 0,
     height: videoStream?.height ?? 0,
     fps: Math.round(fps * 100) / 100,
+    codecName: String(videoStream.codec_name ?? ""),
+    containerFormat: String(data.format?.format_name ?? ""),
+  };
+  if (result.duration <= 0 || result.width <= 0 || result.height <= 0 || !result.codecName) {
+    throw new Error("ffprobe가 유효한 영상 길이·해상도·코덱을 확인하지 못했습니다.");
+  }
+  return result;
+}
+
+export interface OutputProbeResult {
+  duration: number;
+  size: number;
+  width: number;
+  height: number;
+  fps: number;
+  videoCodec: string;
+  audioCodec: string;
+  hasVideo: boolean;
+  hasAudio: boolean;
+}
+
+export async function probeOutputMedia(filePath: string): Promise<OutputProbeResult> {
+  const { stdout } = await runFfprobe([
+    "-v", "error", "-print_format", "json", "-show_format", "-show_streams", filePath,
+  ]);
+  const data = JSON.parse(stdout);
+  const streams = data.streams ?? [];
+  const video = streams.find((stream: { codec_type?: string }) => stream.codec_type === "video");
+  const audio = streams.find((stream: { codec_type?: string }) => stream.codec_type === "audio");
+  let fps = 0;
+  if (video?.avg_frame_rate && video.avg_frame_rate !== "0/0") {
+    const [num = 0, den = 0] = String(video.avg_frame_rate).split("/").map(Number);
+    fps = den ? num / den : num;
+  }
+  return {
+    duration: Number.parseFloat(data.format?.duration ?? video?.duration ?? "0") || 0,
+    size: Number.parseInt(data.format?.size ?? "0", 10) || 0,
+    width: video?.width ?? 0,
+    height: video?.height ?? 0,
+    fps: Math.round(fps * 100) / 100,
+    videoCodec: String(video?.codec_name ?? ""),
+    audioCodec: String(audio?.codec_name ?? ""),
+    hasVideo: Boolean(video),
+    hasAudio: Boolean(audio),
   };
 }
 

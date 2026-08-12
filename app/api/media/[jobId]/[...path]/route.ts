@@ -37,6 +37,8 @@ export async function GET(
     filePath = job.sources.find((s) => s.source_id === sub)?.thumbnail;
   } else if (kind === "source" && sub) {
     filePath = job.sources.find((s) => s.source_id === sub)?.file;
+  } else if (kind === "final") {
+    filePath = job.render?.final_file;
   }
 
   if (!filePath || !existsSync(filePath)) {

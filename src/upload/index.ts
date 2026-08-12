@@ -6,7 +6,7 @@ import { jobSourcesDir, jobThumbsDir } from "@/jobs/paths";
 import { addLog, failStage, resetDownstreamStages, startStage, succeedStage } from "@/jobs/store";
 import { assertTtsReady } from "@/jobs/preconditions";
 
-const SUPPORTED_EXTENSIONS = new Set([".mp4", ".mov", ".m4v", ".webm", ".mkv"]);
+const SUPPORTED_EXTENSIONS = new Set([".mp4", ".mov"]);
 
 export interface UploadStageDependencies {
   probeMedia: typeof probeMedia;
@@ -89,6 +89,8 @@ export async function runUploadStage(
         width: probe.width,
         height: probe.height,
         fps: probe.fps,
+        codec_name: probe.codecName,
+        container_format: probe.containerFormat,
         status: "PENDING",
         thumbnail: thumbPath,
       };

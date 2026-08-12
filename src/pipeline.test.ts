@@ -9,6 +9,7 @@ import { createDefaultCoverSettings, STAGE_ORDER, Job, PipelineError, SourceVide
 import { runTtsStage } from "@/tts";
 import { runUploadStage } from "@/upload";
 import { runValidateStage } from "@/validator";
+import { runRenderStage } from "@/render";
 
 let jobSequence = 0;
 
@@ -215,6 +216,26 @@ test("G: allocator never reuses a clip and records every successful selection", 
   }
 });
 
+test("G2: validator ignores only millisecond boundary rounding, not real range overlap", () => {
+  const rounded = makeJob(2);
+  addSafeSource(rounded, "SOURCE_001", 4);
+  rounded.scenes = [
+    { scene_id: "SCENE_001", timeline_start: 0, timeline_end: 1, duration: 1, source_id: "SOURCE_001", clip_id: "A", source_start: 0, source_end: 1.001 },
+    { scene_id: "SCENE_002", timeline_start: 1, timeline_end: 2, duration: 1, source_id: "SOURCE_001", clip_id: "B", source_start: 1, source_end: 2 },
+  ];
+  runValidateStage(rounded);
+  assert.equal(rounded.validation?.checks.find((check) => check.code === "DUPLICATE_RANGE")?.passed, true);
+
+  const overlapping = makeJob(2);
+  addSafeSource(overlapping, "SOURCE_001", 4);
+  overlapping.scenes = [
+    { scene_id: "SCENE_001", timeline_start: 0, timeline_end: 1, duration: 1, source_id: "SOURCE_001", clip_id: "A", source_start: 0, source_end: 1.01 },
+    { scene_id: "SCENE_002", timeline_start: 1, timeline_end: 2, duration: 1, source_id: "SOURCE_001", clip_id: "B", source_start: 1, source_end: 2 },
+  ];
+  assert.throws(() => runValidateStage(overlapping));
+  assert.equal(overlapping.validation?.checks.find((check) => check.code === "DUPLICATE_RANGE")?.passed, false);
+});
+
 test("H: OCR engine failure identifies stage, source, and frame", async () => {
   const job = makeJob(2);
   job.ocr_enabled = true;
@@ -286,6 +307,39 @@ test("J: ffprobe failure identifies the upload stage and source", async () => {
   assert.equal(job.stages.UPLOAD.status, "FAILED");
   assert.equal(job.stages.UPLOAD.error?.source_id, "SOURCE_001");
   assert.match(String(job.stages.UPLOAD.error?.context?.error), /simulated ffprobe failure/);
+});
+
+test("P: MP4 and MOV pass extension validation only after a real video probe result", async () => {
+  const job = makeJob(2);
+  const probeResult = {
+    duration: 2,
+    width: 1080,
+    height: 1920,
+    fps: 30,
+    codecName: "hevc",
+    containerFormat: "mov,mp4,m4a,3gp,3g2,mj2",
+  };
+  await runUploadStage(
+    job,
+    [
+      { originalFilename: "h264.mp4", buffer: Buffer.from("mp4") },
+      { originalFilename: "iphone-hevc.mov", buffer: Buffer.from("mov") },
+    ],
+    { probeMedia: async () => probeResult, extractThumbnail: async () => {} },
+  );
+  assert.equal(job.stages.UPLOAD.status, "SUCCESS");
+  assert.deepEqual(job.sources.map((source) => source.original_filename), ["h264.mp4", "iphone-hevc.mov"]);
+  assert.deepEqual(job.sources.map((source) => source.codec_name), ["hevc", "hevc"]);
+});
+
+test("Q: render is rejected unless VALIDATE passed", async () => {
+  const job = makeJob(2);
+  await assert.rejects(runRenderStage(job), (error: unknown) => {
+    assert.ok(error instanceof PipelineError);
+    assert.equal(error.code, "RENDER_VALIDATE_REQUIRED");
+    return true;
+  });
+  assert.equal(job.stages.RENDER.status, "PENDING");
 });
 
 test("M: every analysis stage rejects a JOB without a completed TTS", async () => {

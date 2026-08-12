@@ -99,6 +99,24 @@ export default function DebugPanel({ job }: { job: Job }) {
           </div>
         )}
 
+        {job.render && (
+          <div>
+            <p className="mb-1 text-xs font-semibold text-[var(--text-muted)]">RENDER 상세</p>
+            <ul className="flex flex-col gap-1 font-mono text-[11px]">
+              {Object.entries(job.render.substages).map(([name, state]) => (
+                <li key={name} className="rounded bg-gray-50 px-2 py-1.5">
+                  <div className="flex justify-between gap-2"><span>{name}</span><span>{state.status}</span></div>
+                  {state.error && (
+                    <pre className="mt-1 whitespace-pre-wrap break-all text-[10px] text-[var(--danger)]">
+                      {JSON.stringify(state.error, null, 2)}
+                    </pre>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
         {job.validation && (
           <div>
             <p className="mb-1 text-xs font-semibold text-[var(--text-muted)]">검증 항목</p>

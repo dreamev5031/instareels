@@ -10,9 +10,10 @@ const STAGE_LABELS: Record<StageName, string> = {
   CLIP: "영상 구간 생성",
   ALLOCATE: "장면 배정",
   VALIDATE: "검증",
+  RENDER: "최종 영상 렌더",
 };
 
-const VISIBLE_STAGES: StageName[] = ["TTS", "COVER", "UPLOAD", "OCR", "CLIP", "ALLOCATE", "VALIDATE"];
+const VISIBLE_STAGES: StageName[] = ["TTS", "COVER", "UPLOAD", "OCR", "CLIP", "ALLOCATE", "VALIDATE", "RENDER"];
 
 function StatusIcon({ status }: { status: string }) {
   if (status === "SUCCESS") return <span className="text-[var(--success)]">✓</span>;

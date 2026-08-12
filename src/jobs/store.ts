@@ -9,7 +9,7 @@ import {
   StageName,
   StageStatus,
 } from "@/shared/types";
-import { JOBS_ROOT, jobCoverDir, jobDir, jobFile, jobSourcesDir, jobThumbsDir, jobTtsDir } from "./paths";
+import { JOBS_ROOT, jobCoverDir, jobDir, jobFile, jobRenderDir, jobSourcesDir, jobThumbsDir, jobTtsDir } from "./paths";
 
 function ensureDir(dir: string) {
   fs.mkdirSync(dir, { recursive: true });
@@ -32,6 +32,7 @@ export function createJob(): Job {
   ensureDir(jobThumbsDir(jobId));
   ensureDir(jobTtsDir(jobId));
   ensureDir(jobCoverDir(jobId));
+  ensureDir(jobRenderDir(jobId));
 
   const now = new Date().toISOString();
   const stages = Object.fromEntries(
@@ -59,20 +60,11 @@ export function createJob(): Job {
 export function loadJob(jobId: string): Job {
   const raw = fs.readFileSync(jobFile(jobId), "utf-8");
   const job = JSON.parse(raw) as Job;
-  if (!job.stages.COVER) {
-    job.stages = {
-      TTS: job.stages.TTS,
-      COVER: { status: "PENDING" },
-      UPLOAD: job.stages.UPLOAD,
-      OCR: job.stages.OCR,
-      CLIP: job.stages.CLIP,
-      ALLOCATE: job.stages.ALLOCATE,
-      VALIDATE: job.stages.VALIDATE,
-    };
-  }
+  for (const stage of STAGE_ORDER) job.stages[stage] ??= { status: "PENDING" };
   job.cover ??= createDefaultCoverSettings();
   job.ocr_enabled ??= false;
   ensureDir(jobCoverDir(jobId));
+  ensureDir(jobRenderDir(jobId));
   return job;
 }
 
@@ -166,4 +158,5 @@ export function resetDownstreamStages(job: Job, fromStage: StageName): void {
   for (const stage of STAGE_ORDER.slice(idx)) {
     job.stages[stage] = { status: "PENDING" };
   }
+  if (STAGE_ORDER.slice(idx).includes("RENDER")) job.render = undefined;
 }

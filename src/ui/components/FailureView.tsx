@@ -10,6 +10,7 @@ const STAGE_TITLES: Record<StageName, string> = {
   CLIP: "영상 구간 생성 실패",
   ALLOCATE: "영상 배정 실패",
   VALIDATE: "배정 검증 실패",
+  RENDER: "영상 렌더 실패",
 };
 
 interface Props {

@@ -5,7 +5,8 @@ export type StageName =
   | "OCR"
   | "CLIP"
   | "ALLOCATE"
-  | "VALIDATE";
+  | "VALIDATE"
+  | "RENDER";
 
 export const STAGE_ORDER: StageName[] = [
   "TTS",
@@ -15,6 +16,7 @@ export const STAGE_ORDER: StageName[] = [
   "CLIP",
   "ALLOCATE",
   "VALIDATE",
+  "RENDER",
 ];
 
 export type StageStatus = "PENDING" | "RUNNING" | "SUCCESS" | "SKIPPED" | "FAILED";
@@ -45,7 +47,18 @@ export type ErrorCode =
   | "EMPTY_TIMELINE_GAP"
   | "CONSECUTIVE_SOURCE_LIMIT"
   | "SCENE_ID_SEQUENCE"
-  | "DURATION_MISMATCH";
+  | "DURATION_MISMATCH"
+  | "RENDER_VALIDATE_REQUIRED"
+  | "RENDER_ALREADY_RUNNING"
+  | "RENDER_PLAN_INVALID"
+  | "RENDER_SOURCE_MISSING"
+  | "SOURCE_DECODE_FAILED"
+  | "VIDEO_ASSEMBLY_FAILED"
+  | "FONT_PREPARE_FAILED"
+  | "COVER_RENDER_FAILED"
+  | "FINAL_CONCAT_FAILED"
+  | "RENDER_OUTPUT_INVALID"
+  | "RENDER_DECODE_FAILED";
 
 export const COVER_FONT_KEYS = [
   "nanum-square-round",
@@ -150,6 +163,8 @@ export interface SourceVideo {
   width: number;
   height: number;
   fps: number;
+  codec_name?: string;
+  container_format?: string;
   status: SourceStatus;
   thumbnail?: string;
 }
@@ -239,6 +254,52 @@ export interface ValidationResult {
   source_count_total: number;
 }
 
+export type RenderSubstageName =
+  | "VIDEO_ASSEMBLY"
+  | "COVER_RENDER"
+  | "FINAL_CONCAT"
+  | "OUTPUT_VALIDATE";
+
+export const RENDER_SUBSTAGE_ORDER: RenderSubstageName[] = [
+  "VIDEO_ASSEMBLY",
+  "COVER_RENDER",
+  "FINAL_CONCAT",
+  "OUTPUT_VALIDATE",
+];
+
+export interface RenderedScene {
+  scene_id: string;
+  source_id: string;
+  clip_id: string;
+  source_start: number;
+  source_end: number;
+  timeline_start: number;
+  timeline_end: number;
+  duration: number;
+  file: string;
+}
+
+export interface RenderResult {
+  status: "RUNNING" | "SUCCESS" | "FAILED";
+  substages: Record<RenderSubstageName, StageState>;
+  scene_plan: RenderedScene[];
+  assembled_file?: string;
+  cover_file?: string;
+  final_file?: string;
+  final_media_path?: string;
+  body_duration?: number;
+  cover_duration?: number;
+  final_duration?: number;
+  width?: number;
+  height?: number;
+  fps?: number;
+  video_codec?: string;
+  audio_codec?: string;
+  file_size?: number;
+  first_frame_matches_cover?: boolean;
+  decode_verified?: boolean;
+}
+
 export interface Job {
   job_id: string;
   created_at: string;
@@ -253,6 +314,7 @@ export interface Job {
   scenes: Scene[];
   allocation_decisions?: AllocationDecision[];
   validation?: ValidationResult;
+  render?: RenderResult;
   logs: JobLogEntry[];
 }
 

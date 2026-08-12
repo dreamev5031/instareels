@@ -79,7 +79,7 @@ export default function UploadStep({
         ref={inputRef}
         data-testid="video-file-input"
         type="file"
-        accept="video/*"
+        accept=".mp4,.mov,video/mp4,video/quicktime"
         multiple
         className="hidden"
         onChange={handleChange}

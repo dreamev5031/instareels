@@ -7,6 +7,9 @@ const DURATION_TOLERANCE_MIN = 0.5;
 const SOURCE_OVERUSE_RATIO = 0.6;
 const MAX_CONSECUTIVE_SAME_SOURCE = 2;
 const TIMELINE_GAP_EPSILON = 0.05;
+// Clip boundaries are persisted to millisecond precision. Division followed
+// by independent rounding can make adjacent ranges appear to overlap by 1ms.
+const RANGE_OVERLAP_EPSILON = 0.002;
 
 export function runValidateStage(job: Job): void {
   assertTtsReady(job, "VALIDATE");
@@ -74,7 +77,7 @@ export function runValidateStage(job: Job): void {
       for (let i = 0; i < sorted.length - 1; i++) {
         const current = sorted[i]!;
         const next = sorted[i + 1]!;
-        if (current.source_end > next.source_start + 0.001) {
+        if (current.source_end > next.source_start + RANGE_OVERLAP_EPSILON) {
           rangeOverlaps.push(`${current.scene_id} <-> ${next.scene_id}`);
         }
       }

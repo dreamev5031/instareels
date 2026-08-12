@@ -32,6 +32,14 @@ export function jobCoverDir(jobId: string): string {
   return path.join(jobDir(jobId), "cover");
 }
 
+export function jobRenderDir(jobId: string): string {
+  return path.join(jobDir(jobId), "render");
+}
+
+export function jobRenderScenesDir(jobId: string): string {
+  return path.join(jobRenderDir(jobId), "scenes");
+}
+
 export function jobFramesDir(jobId: string, sourceId: string): string {
   return path.join(jobDir(jobId), "frames", sourceId);
 }

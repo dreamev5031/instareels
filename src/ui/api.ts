@@ -87,3 +87,36 @@ export async function runAnalysis(
   if (!lastJob) throw new Error("분석 결과를 받지 못했습니다.");
   return lastJob;
 }
+
+export async function renderVideo(
+  jobId: string,
+  onProgress: (job: Job) => void,
+): Promise<Job> {
+  const res = await fetch(`${API_BASE_URL}/api/job/${jobId}/render`, { method: "POST" });
+  if (!res.ok || !res.body) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.message || body.error_code || "영상 렌더 요청에 실패했습니다.");
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let lastJob: Job | null = null;
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      const parsed = JSON.parse(line);
+      if (parsed.job) {
+        lastJob = parsed.job as Job;
+        onProgress(lastJob);
+      }
+    }
+  }
+  if (!lastJob) throw new Error("렌더 결과를 받지 못했습니다.");
+  return lastJob;
+}
