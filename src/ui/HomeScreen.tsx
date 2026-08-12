@@ -2,13 +2,16 @@
 
 import { useState } from "react";
 import { Job, STAGE_ORDER, StageName } from "@/shared/types";
-import { generateTts, runAnalysis, uploadVideos } from "./api";
+import { generateTts, runAnalysis, saveCover, uploadVideos } from "./api";
 import { DEFAULT_VOICE } from "@/tts/voices";
 import TtsStep from "./components/TtsStep";
 import UploadStep from "./components/UploadStep";
 import ProgressView from "./components/ProgressView";
 import ResultSummary from "./components/ResultSummary";
 import FailureView from "./components/FailureView";
+import CoverStep from "./components/CoverStep";
+import WorkflowSteps from "./components/WorkflowSteps";
+import type { CoverSettings } from "@/shared/types";
 
 export default function HomeScreen() {
   const [job, setJob] = useState<Job | null>(null);
@@ -17,12 +20,15 @@ export default function HomeScreen() {
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
 
   const [ttsLoading, setTtsLoading] = useState(false);
+  const [coverSaving, setCoverSaving] = useState(false);
+  const [coverDirty, setCoverDirty] = useState(false);
   const [uploadLoading, setUploadLoading] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [requestError, setRequestError] = useState<string | null>(null);
 
-  const failedStage: StageName | null =
-    job ? STAGE_ORDER.find((s) => job.stages[s].status === "FAILED") ?? null : null;
+  const failedStage: StageName | null = job
+    ? STAGE_ORDER.find((stage) => stage !== "COVER" && job.stages[stage].status === "FAILED") ?? null
+    : null;
 
   async function handleGenerateTts() {
     setTtsLoading(true);
@@ -52,6 +58,22 @@ export default function HomeScreen() {
     }
   }
 
+  async function handleCoverSave(file: File | null, settings: Omit<CoverSettings, "image">) {
+    if (!job) return;
+    setCoverSaving(true);
+    setRequestError(null);
+    try {
+      const updated = await saveCover(job.job_id, file, settings);
+      setJob(updated);
+      if (updated.stages.COVER.status !== "SUCCESS") {
+        throw new Error(updated.stages.COVER.error?.message ?? "앞표지를 저장하지 못했습니다.");
+      }
+      setCoverDirty(false);
+    } finally {
+      setCoverSaving(false);
+    }
+  }
+
   async function handleAnalyze() {
     if (!job) return;
     setAnalyzing(true);
@@ -78,8 +100,9 @@ export default function HomeScreen() {
   }
 
   const ttsDone = job?.stages.TTS.status === "SUCCESS";
+  const coverDone = job?.stages.COVER.status === "SUCCESS";
   const uploadDone = job?.stages.UPLOAD.status === "SUCCESS";
-  const showAnalyzeButton = uploadDone && !analyzing && job?.stages.VALIDATE.status !== "SUCCESS" && !failedStage;
+  const showAnalyzeButton = uploadDone && coverDone && !coverDirty && !analyzing && job?.stages.VALIDATE.status !== "SUCCESS" && !failedStage;
   const pipelineStarted =
     analyzing ||
     (job && ["OCR", "CLIP", "ALLOCATE", "VALIDATE"].some((s) => job.stages[s as StageName].status !== "PENDING"));
@@ -90,6 +113,7 @@ export default function HomeScreen() {
       <header className="sticky top-0 z-10 border-b border-[var(--border)] bg-[var(--surface)] px-5 py-4">
         <h1 className="text-lg font-bold tracking-tight">Instagram Reels Generator</h1>
         {job && <p className="mt-0.5 text-xs text-[var(--text-muted)]">{job.job_id}</p>}
+        <WorkflowSteps job={job} />
       </header>
 
       <div className="flex flex-1 flex-col gap-4 px-4 pt-4">
@@ -104,6 +128,15 @@ export default function HomeScreen() {
         />
 
         {ttsDone && (
+          <CoverStep
+            job={job!}
+            saving={coverSaving}
+            onSave={handleCoverSave}
+            onDirtyChange={setCoverDirty}
+          />
+        )}
+
+        {coverDone && (
           <UploadStep
             job={job!}
             loading={uploadLoading}
@@ -122,7 +155,7 @@ export default function HomeScreen() {
 
         {pipelineStarted && job && <ProgressView job={job} />}
 
-        {failedStage && job && <FailureView job={job} stage={failedStage} onRetry={handleRetry} retrying={ttsLoading || uploadLoading || analyzing} />}
+        {failedStage && job && <FailureView job={job} stage={failedStage} onRetry={handleRetry} retrying={ttsLoading || coverSaving || uploadLoading || analyzing} />}
 
         {showResult && job && <ResultSummary job={job} />}
       </div>

@@ -1,5 +1,12 @@
 @import "tailwindcss";
 
+@font-face {
+  font-family: "SCoreDreamExtraBold";
+  src: url("https://cdn.jsdelivr.net/gh/projectnoonnu/noonfonts_six@1.2/S-CoreDream-8Heavy.woff") format("woff");
+  font-weight: 800;
+  font-display: swap;
+}
+
 :root {
   --bg: #f5f6f8;
   --surface: #ffffff;
@@ -40,4 +47,10 @@ input,
 button,
 select {
   font-family: inherit;
+}
+
+button,
+label,
+input[type="file"] {
+  -webkit-tap-highlight-color: transparent;
 }

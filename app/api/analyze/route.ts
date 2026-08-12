@@ -19,6 +19,12 @@ export async function POST(req: Request) {
   }
 
   const job = loadJob(body.jobId);
+  if (job.stages.COVER.status !== "SUCCESS") {
+    return new Response(
+      JSON.stringify({ error: "COVER_NOT_READY", message: "앞표지를 먼저 완성해 주세요." }),
+      { status: 400 }
+    );
+  }
   if (job.stages.UPLOAD.status !== "SUCCESS") {
     return new Response(
       JSON.stringify({ error: "UPLOAD_NOT_READY", message: "영상 업로드가 완료된 뒤 분석을 시작할 수 있습니다." }),

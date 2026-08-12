@@ -28,6 +28,10 @@ export function jobTtsDir(jobId: string): string {
   return path.join(jobDir(jobId), "tts");
 }
 
+export function jobCoverDir(jobId: string): string {
+  return path.join(jobDir(jobId), "cover");
+}
+
 export function jobFramesDir(jobId: string, sourceId: string): string {
   return path.join(jobDir(jobId), "frames", sourceId);
 }

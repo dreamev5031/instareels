@@ -3,6 +3,7 @@
 import { AllocationCandidateBreakdown, Job, StageName } from "@/shared/types";
 
 const STAGE_TITLES: Record<StageName, string> = {
+  COVER: "앞표지 저장 실패",
   TTS: "TTS 생성 실패",
   UPLOAD: "영상 업로드 실패",
   OCR: "OCR 분석 실패",

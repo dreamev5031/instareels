@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import test from "node:test";
 import { runAllocateStage } from "@/allocator";
+import { runCoverStage } from "@/cover";
 import { runClipStage } from "@/clips";
 import { runOcrStage } from "@/ocr";
-import { STAGE_ORDER, Job, PipelineError, SourceVideo, StageStatus } from "@/shared/types";
+import { createDefaultCoverSettings, STAGE_ORDER, Job, PipelineError, SourceVideo, StageStatus } from "@/shared/types";
 import { runTtsStage } from "@/tts";
 import { runUploadStage } from "@/upload";
 import { runValidateStage } from "@/validator";
@@ -21,6 +23,7 @@ function makeJob(ttsDuration = 0): Job {
     created_at: now,
     updated_at: now,
     stages,
+    cover: createDefaultCoverSettings(),
     tts:
       ttsDuration > 0
         ? { status: "success", text: "test", voice: "ko-KR-SunHiNeural", file: "tts.mp3", duration: ttsDuration }
@@ -52,6 +55,45 @@ function addSafeSource(job: Job, sourceId: string, duration: number): void {
   addSource(job, sourceId, duration);
   job.ocr[sourceId] = [{ start: 0, end: duration, ocr_safe: true, confidence: 99 }];
 }
+
+test("K: cover image is required and the failure is recorded on COVER", async () => {
+  const job = makeJob(3);
+  job.stages.TTS.status = "SUCCESS";
+  await runCoverStage(job, { settings: createDefaultCoverSettings() });
+
+  assert.equal(job.stages.COVER.status, "FAILED");
+  assert.equal(job.stages.COVER.error?.error_code, "COVER_IMAGE_REQUIRED");
+});
+
+test("L: cover settings and uploaded image are persisted without changing analysis stages", async () => {
+  const job = makeJob(3);
+  job.stages.TTS.status = "SUCCESS";
+  const settings = {
+    ...createDefaultCoverSettings(),
+    main_text: "메인 문구",
+    sub_text: "서브 문구",
+    main_font: "pretendard" as const,
+    sub_font: "yg-jalnan" as const,
+    use_same_font: false,
+    vertical_position: "bottom" as const,
+  };
+  await runCoverStage(job, {
+    settings,
+    file: {
+      buffer: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      originalFilename: "cover.png",
+      mimeType: "image/png",
+      size: 8,
+    },
+  });
+
+  assert.equal(job.stages.COVER.status, "SUCCESS");
+  assert.equal(job.cover.main_text, "메인 문구");
+  assert.equal(job.cover.sub_font, "yg-jalnan");
+  assert.equal(job.cover.vertical_position, "bottom");
+  assert.equal(job.stages.UPLOAD.status, "PENDING");
+  assert.ok(job.cover.image && fs.existsSync(job.cover.image.file));
+});
 
 function allocateAndValidate(job: Job): void {
   runClipStage(job);

@@ -4,11 +4,12 @@ import {
   Job,
   JobError,
   JobLogEntry,
+  createDefaultCoverSettings,
   STAGE_ORDER,
   StageName,
   StageStatus,
 } from "@/shared/types";
-import { JOBS_ROOT, jobDir, jobFile, jobSourcesDir, jobThumbsDir, jobTtsDir } from "./paths";
+import { JOBS_ROOT, jobCoverDir, jobDir, jobFile, jobSourcesDir, jobThumbsDir, jobTtsDir } from "./paths";
 
 function ensureDir(dir: string) {
   fs.mkdirSync(dir, { recursive: true });
@@ -30,6 +31,7 @@ export function createJob(): Job {
   ensureDir(jobSourcesDir(jobId));
   ensureDir(jobThumbsDir(jobId));
   ensureDir(jobTtsDir(jobId));
+  ensureDir(jobCoverDir(jobId));
 
   const now = new Date().toISOString();
   const stages = Object.fromEntries(
@@ -41,6 +43,7 @@ export function createJob(): Job {
     created_at: now,
     updated_at: now,
     stages,
+    cover: createDefaultCoverSettings(),
     sources: [],
     ocr: {},
     clips: [],
@@ -54,7 +57,21 @@ export function createJob(): Job {
 
 export function loadJob(jobId: string): Job {
   const raw = fs.readFileSync(jobFile(jobId), "utf-8");
-  return JSON.parse(raw) as Job;
+  const job = JSON.parse(raw) as Job;
+  if (!job.stages.COVER) {
+    job.stages = {
+      TTS: job.stages.TTS,
+      COVER: { status: "PENDING" },
+      UPLOAD: job.stages.UPLOAD,
+      OCR: job.stages.OCR,
+      CLIP: job.stages.CLIP,
+      ALLOCATE: job.stages.ALLOCATE,
+      VALIDATE: job.stages.VALIDATE,
+    };
+  }
+  job.cover ??= createDefaultCoverSettings();
+  ensureDir(jobCoverDir(jobId));
+  return job;
 }
 
 export function jobExists(jobId: string): boolean {

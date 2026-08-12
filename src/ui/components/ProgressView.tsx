@@ -3,6 +3,7 @@
 import { Job, StageName } from "@/shared/types";
 
 const STAGE_LABELS: Record<StageName, string> = {
+  COVER: "앞표지 설정",
   TTS: "TTS 생성",
   UPLOAD: "영상 업로드",
   OCR: "OCR 분석",
@@ -11,7 +12,7 @@ const STAGE_LABELS: Record<StageName, string> = {
   VALIDATE: "검증",
 };
 
-const VISIBLE_STAGES: StageName[] = ["TTS", "UPLOAD", "OCR", "CLIP", "ALLOCATE", "VALIDATE"];
+const VISIBLE_STAGES: StageName[] = ["TTS", "COVER", "UPLOAD", "OCR", "CLIP", "ALLOCATE", "VALIDATE"];
 
 function StatusIcon({ status }: { status: string }) {
   if (status === "SUCCESS") return <span className="text-[var(--success)]">✓</span>;

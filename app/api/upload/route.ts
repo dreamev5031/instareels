@@ -20,6 +20,12 @@ export async function POST(req: Request) {
       { status: 400 }
     );
   }
+  if (job.stages.COVER.status !== "SUCCESS") {
+    return NextResponse.json(
+      { error: "COVER_NOT_READY", message: "앞표지를 먼저 완성해 주세요." },
+      { status: 400 }
+    );
+  }
 
   const fileEntries = formData.getAll("files").filter((f): f is File => f instanceof File);
   const files: { originalFilename: string; buffer: Buffer }[] = [];
