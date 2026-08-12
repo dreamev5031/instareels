@@ -19,6 +19,14 @@ function run(bin: string, args: string[]): Promise<{ stdout: string; stderr: str
   });
 }
 
+/** Confirms a binary (ffmpeg/ffprobe) is on PATH and runnable; returns its
+ *  version line. Used by the diagnostics endpoint, not the pipeline itself. */
+export async function checkBinaryVersion(bin: "ffmpeg" | "ffprobe"): Promise<string> {
+  const target = bin === "ffmpeg" ? FFMPEG_BIN : FFPROBE_BIN;
+  const { stdout } = await run(target, ["-version"]);
+  return stdout.split("\n")[0]?.trim() ?? "";
+}
+
 export interface ProbeResult {
   duration: number;
   width: number;

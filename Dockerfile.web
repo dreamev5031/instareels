@@ -1,0 +1,55 @@
+# syntax=docker/dockerfile:1
+#
+# Frontend (instareels-web) — same Next.js app as the backend, but only the
+# UI is actually used; app/api/* is still present (unmodified codebase) but
+# unused, since the browser calls NEXT_PUBLIC_API_URL directly instead.
+# No ffmpeg/OCR/TTS system deps needed here.
+
+FROM node:24-bookworm-slim AS base
+
+# ---- dependencies -----------------------------------------------------
+# --ignore-scripts: one of our deps (msedge-tts) ships a preinstall script
+# that hard-fails unless run through pnpm; none of our deps need their
+# install scripts to run for functionality, so scripts are skipped entirely.
+FROM base AS deps
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci --ignore-scripts
+
+# ---- build --------------------------------------------------------------
+# NEXT_PUBLIC_* vars are inlined into the client bundle at build time, so
+# this must be supplied as a build ARG (Railway: set it as a build-time
+# service variable), not just a runtime ENV on the running container.
+FROM base AS builder
+WORKDIR /app
+ARG NEXT_PUBLIC_API_URL
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
+RUN npm run build
+
+# ---- runtime --------------------------------------------------------------
+FROM base AS runner
+WORKDIR /app
+
+ENV NODE_ENV=production
+# app/api/* is unused here but still present in the bundle (same codebase as
+# the backend), so it still needs a writable WORK_DIR to avoid EACCES if it's
+# ever hit. /tmp is world-writable, unlike /app.
+ENV WORK_DIR=/tmp/instareels
+
+RUN groupadd --system --gid 1001 nodejs \
+ && useradd --system --uid 1001 --gid nodejs nextjs
+
+COPY --from=deps /app/node_modules ./node_modules
+COPY --from=builder --chown=nextjs:nodejs /app/.next ./.next
+COPY --from=builder --chown=nextjs:nodejs /app/public ./public
+COPY package.json next.config.ts proxy.ts ./
+
+USER nextjs
+
+EXPOSE 3000
+
+# Railway injects PORT; `next start` reads it directly. -H 0.0.0.0 makes the
+# server reachable from outside the container instead of localhost-only.
+CMD ["node_modules/.bin/next", "start", "-H", "0.0.0.0"]

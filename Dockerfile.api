@@ -1,4 +1,9 @@
 # syntax=docker/dockerfile:1
+#
+# Backend (instareels-api) — runs the full Next.js app including app/api/*.
+# This is the only deployment that needs ffmpeg/ffprobe (TTS duration
+# probing, video probing, thumbnails, OCR frame extraction) and writes job
+# data under WORK_DIR.
 
 FROM node:24-bookworm-slim AS base
 
@@ -25,28 +30,28 @@ RUN npm run build
 FROM base AS runner
 WORKDIR /app
 
-# ffmpeg/ffprobe are required at runtime for TTS duration probing, video
-# probing, thumbnail extraction, and OCR frame extraction.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ffmpeg \
  && rm -rf /var/lib/apt/lists/*
 
 ENV NODE_ENV=production
-ENV DATA_ROOT=/app/data
+# Ephemeral by default (matches Railway's non-Volume filesystem) and
+# world-writable, so no explicit chown is needed for any uid. Point this at
+# a mounted Railway Volume path later for persistence, e.g. WORK_DIR=/data.
+ENV WORK_DIR=/tmp/instareels
 
 RUN groupadd --system --gid 1001 nodejs \
- && useradd --system --uid 1001 --gid nodejs nextjs \
- && mkdir -p /app/data \
- && chown -R nextjs:nodejs /app/data
+ && useradd --system --uid 1001 --gid nodejs nextjs
 
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=builder --chown=nextjs:nodejs /app/.next ./.next
 COPY --from=builder --chown=nextjs:nodejs /app/public ./public
-COPY package.json next.config.ts ./
+COPY package.json next.config.ts proxy.ts ./
 
 USER nextjs
 
 EXPOSE 3000
 
-# Railway injects PORT; `next start` reads it directly.
-CMD ["node_modules/.bin/next", "start"]
+# Railway injects PORT; `next start` reads it directly. -H 0.0.0.0 makes the
+# server reachable from outside the container instead of localhost-only.
+CMD ["node_modules/.bin/next", "start", "-H", "0.0.0.0"]

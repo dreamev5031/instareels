@@ -1,5 +1,9 @@
 import { Job, Voice } from "@/shared/types";
 
+// Empty string in same-origin/local dev (relative fetches keep working as-is).
+// Set to the backend's public URL when the frontend is deployed separately.
+export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "";
+
 async function parseJobResponse(res: Response): Promise<Job> {
   const body = await res.json();
   if (body.job) return body.job as Job;
@@ -7,13 +11,13 @@ async function parseJobResponse(res: Response): Promise<Job> {
 }
 
 export async function fetchVoices(): Promise<Voice[]> {
-  const res = await fetch("/api/voices");
+  const res = await fetch(`${API_BASE_URL}/api/voices`);
   const body = await res.json();
   return body.voices as Voice[];
 }
 
 export async function generateTts(jobId: string | null, text: string, voice: string): Promise<Job> {
-  const res = await fetch("/api/tts", {
+  const res = await fetch(`${API_BASE_URL}/api/tts`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ jobId, text, voice }),
@@ -25,12 +29,12 @@ export async function uploadVideos(jobId: string, files: File[]): Promise<Job> {
   const formData = new FormData();
   formData.append("jobId", jobId);
   for (const f of files) formData.append("files", f);
-  const res = await fetch("/api/upload", { method: "POST", body: formData });
+  const res = await fetch(`${API_BASE_URL}/api/upload`, { method: "POST", body: formData });
   return parseJobResponse(res);
 }
 
 export async function runAnalysis(jobId: string, onProgress: (job: Job) => void): Promise<Job> {
-  const res = await fetch("/api/analyze", {
+  const res = await fetch(`${API_BASE_URL}/api/analyze`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ jobId }),

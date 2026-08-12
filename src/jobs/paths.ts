@@ -1,7 +1,12 @@
 import path from "node:path";
 
-export const DATA_ROOT = process.env.DATA_ROOT || path.join(process.cwd(), "data");
-export const JOBS_ROOT = path.join(DATA_ROOT, "jobs");
+export const WORK_DIR = process.env.WORK_DIR || path.join(process.cwd(), "data");
+export const JOBS_ROOT = path.join(WORK_DIR, "jobs");
+
+/** Where tesseract.js caches downloaded language trained-data files.
+ *  Without this, it defaults to `process.cwd()`, which may not be writable
+ *  in a container (and pollutes the app directory even when it is). */
+export const OCR_CACHE_DIR = path.join(WORK_DIR, "ocr-cache");
 
 export function jobDir(jobId: string): string {
   return path.join(JOBS_ROOT, jobId);

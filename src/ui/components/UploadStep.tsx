@@ -2,6 +2,7 @@
 
 import { useRef } from "react";
 import { Job } from "@/shared/types";
+import { API_BASE_URL } from "@/ui/api";
 
 interface Props {
   job: Job;
@@ -60,7 +61,7 @@ export default function UploadStep({ job, loading, onUpload, onAnalyze, showAnal
             >
               <div className="h-16 w-full bg-gray-100">
                 <img
-                  src={`/api/media/${job.job_id}/thumb/${s.source_id}`}
+                  src={`${API_BASE_URL}/api/media/${job.job_id}/thumb/${s.source_id}`}
                   alt={s.source_id}
                   className="h-full w-full object-cover"
                 />

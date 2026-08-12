@@ -1,11 +1,17 @@
+import fs from "node:fs";
 import { createWorker, PSM, Worker } from "tesseract.js";
+import { OCR_CACHE_DIR } from "@/jobs/paths";
 import { OcrEngine, OcrEngineResult } from "./engine";
 
 export class TesseractOcrEngine implements OcrEngine {
   private workerPromise: Promise<Worker> | null = null;
 
   private async createWorker(): Promise<Worker> {
-    const worker = await createWorker("chi_sim+eng");
+    // Without an explicit cachePath, tesseract.js defaults to `process.cwd()`
+    // for downloaded language trained-data, which may not be writable in a
+    // container and pollutes the app directory even when it is.
+    fs.mkdirSync(OCR_CACHE_DIR, { recursive: true });
+    const worker = await createWorker("chi_sim+eng", undefined, { cachePath: OCR_CACHE_DIR });
     // Without an explicit PSM, tesseract.js falls back to a mode that
     // aggressively hunts for text everywhere in the frame, which hallucinates
     // CJK-looking glyphs out of ordinary photo texture/noise (verified against

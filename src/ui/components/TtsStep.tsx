@@ -2,6 +2,7 @@
 
 import { Job } from "@/shared/types";
 import { SUPPORTED_VOICES } from "@/tts/voices";
+import { API_BASE_URL } from "@/ui/api";
 
 interface Props {
   text: string;
@@ -65,7 +66,7 @@ export default function TtsStep({ text, onTextChange, voice, onVoiceChange, load
             <span>TTS 생성 완료</span>
             <span className="ml-auto tabular-nums">{job.tts.duration.toFixed(2)}초</span>
           </p>
-          <audio className="mt-2 w-full" controls src={`/api/media/${job.job_id}/tts`} />
+          <audio className="mt-2 w-full" controls src={`${API_BASE_URL}/api/media/${job.job_id}/tts`} />
         </div>
       )}
     </section>
