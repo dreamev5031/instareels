@@ -5,7 +5,7 @@ import { runAllocateStage } from "@/allocator";
 import { runCoverStage } from "@/cover";
 import { runClipStage } from "@/clips";
 import { runOcrStage } from "@/ocr";
-import { createDefaultCoverSettings, STAGE_ORDER, Job, PipelineError, SourceVideo, StageStatus } from "@/shared/types";
+import { createDefaultCoverSettings, createDefaultSubtitleSettings, STAGE_ORDER, Job, PipelineError, SourceVideo, StageStatus } from "@/shared/types";
 import { runTtsStage } from "@/tts";
 import { runUploadStage } from "@/upload";
 import { runValidateStage } from "@/validator";
@@ -26,10 +26,11 @@ function makeJob(ttsDuration = 0): Job {
     updated_at: now,
     stages,
     cover: createDefaultCoverSettings(),
+    subtitle: { status: "PENDING", settings: createDefaultSubtitleSettings(), segments: [] },
     ocr_enabled: false,
     tts:
       ttsDuration > 0
-        ? { status: "success", text: "test", voice: "ko-KR-SunHiNeural", file: "tts.mp3", duration: ttsDuration }
+        ? { status: "success", provider: "edge", text: "test", voice: "ko-KR-SunHiNeural", file: "tts.mp3", audio_path: "tts.mp3", duration: ttsDuration, timing: { source: "duration_fallback", words: [] } }
         : undefined,
     sources: [],
     ocr: {},

@@ -5,6 +5,7 @@ import {
   JobError,
   JobLogEntry,
   createDefaultCoverSettings,
+  createDefaultSubtitleSettings,
   STAGE_ORDER,
   StageName,
   StageStatus,
@@ -45,6 +46,7 @@ export function createJob(): Job {
     updated_at: now,
     stages,
     cover: createDefaultCoverSettings(),
+    subtitle: { status: "PENDING", settings: createDefaultSubtitleSettings(), segments: [] },
     ocr_enabled: false,
     sources: [],
     ocr: {},
@@ -62,6 +64,12 @@ export function loadJob(jobId: string): Job {
   const job = JSON.parse(raw) as Job;
   for (const stage of STAGE_ORDER) job.stages[stage] ??= { status: "PENDING" };
   job.cover ??= createDefaultCoverSettings();
+  job.subtitle ??= { status: "PENDING", settings: createDefaultSubtitleSettings(), segments: [] };
+  job.tts && (job.tts.provider ??= "edge");
+  if (job.tts) {
+    job.tts.audio_path ??= job.tts.file;
+    job.tts.timing ??= { source: "duration_fallback", words: [] };
+  }
   job.ocr_enabled ??= false;
   ensureDir(jobCoverDir(jobId));
   ensureDir(jobRenderDir(jobId));
@@ -159,4 +167,7 @@ export function resetDownstreamStages(job: Job, fromStage: StageName): void {
     job.stages[stage] = { status: "PENDING" };
   }
   if (STAGE_ORDER.slice(idx).includes("RENDER")) job.render = undefined;
+  if (fromStage === "TTS") {
+    job.subtitle = { status: "PENDING", settings: job.subtitle?.settings ?? createDefaultSubtitleSettings(), segments: [] };
+  }
 }

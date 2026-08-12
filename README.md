@@ -1,8 +1,8 @@
 # instareels
 
-정식 렌더 API는 `POST /api/job/:jobId/render`이다. `VALIDATE PASS` JOB의 확정된 scene 순서를 그대로 1080x1920 H.264/AAC MP4로 조립하고, 저장된 앞표지 이미지·문구·폰트·위치·색상·그림자·외곽선을 적용한 0.1초 클립을 맨 앞에 붙인다. 렌더 상태는 `RENDER` 및 `VIDEO_ASSEMBLY`, `COVER_RENDER`, `FINAL_CONCAT`, `OUTPUT_VALIDATE` 하위 단계로 JOB JSON에 저장된다. 최종 영상은 `GET /api/media/:jobId/final`에서 확인할 수 있다. 입력 영상은 `.mp4`와 `.mov`를 지원하며 확장자 확인 후 ffprobe의 실제 비디오 스트림·길이·해상도·코덱을 검증한다.
+정식 렌더 API는 `POST /api/job/:jobId/render`이다. `VALIDATE PASS` JOB의 확정된 scene 순서를 그대로 1080x1920 H.264/AAC MP4로 조립하고, 확정된 TTS 타이밍 기반 ASS 자막을 burn-in한 뒤 저장된 앞표지 0.1초 클립을 맨 앞에 붙인다. 렌더 상태는 `RENDER` 및 `VIDEO_ASSEMBLY`, `SUBTITLE_GENERATION`, `SUBTITLE_BURN`, `COVER_RENDER`, `FINAL_CONCAT`, `OUTPUT_VALIDATE` 하위 단계로 JOB JSON에 저장된다. 최종 영상은 `GET /api/media/:jobId/final`에서 확인할 수 있다. 입력 영상은 `.mp4`와 `.mov`를 지원하며 확장자 확인 후 ffprobe의 실제 비디오 스트림·길이·해상도·코덱을 검증한다.
 
-TTS 나레이션 → Edge TTS 생성 → 앞표지 설정 → 영상 업로드 → 선택적 OCR 위험구간 제외 → TTS 길이에 맞춘 SCENE 배정까지의 파이프라인. TTS duration 확정 전에는 모든 영상 처리 단계를 서버에서도 차단한다. 중국어 검사는 기본 OFF이며, OFF일 때 OCR 엔진을 실행하지 않고 전체 영상을 SAFE로 사용한다. 앞표지는 이미지/문구/폰트/세로 위치를 JOB에 저장하고 실시간 미리보기를 제공한다. 자막/BGM/최종 렌더는 아직 범위에 포함하지 않음.
+TTS 나레이션 → TTS provider 생성 → 앞표지 설정 → 영상 업로드 → 선택적 OCR 위험구간 제외 → TTS 길이에 맞춘 SCENE 배정 → 자막 → 최종 렌더 파이프라인이다. TTS provider는 `audioPath`, duration, word/segment timing만 공통 계약으로 반환하므로 자막과 renderer는 Edge/ElevenLabs 종류를 알지 못한다. 자막 설정은 `POST /api/job/:jobId/subtitle`에 저장하며 9개 ASS 효과를 지원한다. BGM과 Instagram 업로드는 아직 범위에 포함하지 않는다.
 
 ## 로컬 실행
 

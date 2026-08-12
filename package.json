@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "tsc --noEmit",
-    "test": "tsx --test src/**/*.test.ts"
+    "test": "tsx --test src/**/*.test.ts",
+    "test:subtitle-presets": "tsx scripts/verify-subtitle-presets.ts"
   },
   "dependencies": {
     "@kfonts/bm-dohyeon": "^0.2.1",

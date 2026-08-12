@@ -27,6 +27,16 @@ export default function DebugPanel({ job }: { job: Job }) {
           </ul>
         </div>
 
+        <div className="rounded-xl bg-slate-50 px-3 py-2.5 text-xs">
+          <span className="font-semibold">자막: </span>
+          <span>{job.subtitle.settings.enabled ? "사용" : "사용 안 함"} · {job.subtitle.status}</span>
+          <p className="mt-1 break-all text-[var(--text-muted)]">
+            {job.subtitle.segments.length} segments · {job.subtitle.settings.font} · {job.subtitle.settings.effect}
+            {job.subtitle.ass_file ? ` · ${job.subtitle.ass_file}` : ""}
+          </p>
+          {job.subtitle.error && <pre className="mt-2 whitespace-pre-wrap break-all text-[10px] text-[var(--danger)]">{JSON.stringify(job.subtitle.error, null, 2)}</pre>}
+        </div>
+
         <div>
           <p className="mb-1 text-xs font-semibold text-[var(--text-muted)]">로그 ({job.logs.length})</p>
           <div className="max-h-56 overflow-y-auto rounded bg-gray-50 p-2">

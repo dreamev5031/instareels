@@ -56,3 +56,12 @@ export async function prepareRenderFont(font: CoverFontKey, outputDir: string): 
   await fs.writeFile(target, output);
   return target;
 }
+
+export async function readRenderFontFamily(fontPath: string): Promise<string> {
+  const buffer = await fs.readFile(fontPath);
+  const type = path.extname(fontPath).toLowerCase() === ".otf" ? "otf" : "ttf";
+  const parsed = fontEditorCore.Font.create(exactArrayBuffer(buffer), { type });
+  const family = String(parsed.get().name?.fontFamily ?? "").trim();
+  if (!family) throw new Error(`폰트 내부 family name을 읽을 수 없습니다: ${fontPath}`);
+  return family;
+}
