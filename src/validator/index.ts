@@ -1,5 +1,6 @@
 import { Job, PipelineError, ValidationCheck, ValidationResult } from "@/shared/types";
 import { addLog, failStage, resetDownstreamStages, startStage, succeedStage } from "@/jobs/store";
+import { assertTtsReady } from "@/jobs/preconditions";
 
 const DURATION_TOLERANCE_RATIO = 0.05;
 const DURATION_TOLERANCE_MIN = 0.5;
@@ -8,6 +9,7 @@ const MAX_CONSECUTIVE_SAME_SOURCE = 2;
 const TIMELINE_GAP_EPSILON = 0.05;
 
 export function runValidateStage(job: Job): void {
+  assertTtsReady(job, "VALIDATE");
   resetDownstreamStages(job, "VALIDATE");
   startStage(job, "VALIDATE");
 
@@ -87,25 +89,35 @@ export function runValidateStage(job: Job): void {
       detail: { rangeOverlaps },
     });
 
-    // 5. OCR blocked usage
-    const blockedUsages: string[] = [];
-    for (const s of scenes) {
-      const segments = job.ocr[s.source_id] ?? [];
-      const blocked = segments.filter((seg) => !seg.ocr_safe);
-      for (const seg of blocked) {
-        const overlaps = s.source_start < seg.end && s.source_end > seg.start;
-        if (overlaps) blockedUsages.push(s.scene_id);
+    // 5. OCR blocked usage (only applicable when the user enabled OCR)
+    if (job.ocr_enabled) {
+      const blockedUsages: string[] = [];
+      for (const s of scenes) {
+        const segments = job.ocr[s.source_id] ?? [];
+        const blocked = segments.filter((seg) => !seg.ocr_safe);
+        for (const seg of blocked) {
+          const overlaps = s.source_start < seg.end && s.source_end > seg.start;
+          if (overlaps) blockedUsages.push(s.scene_id);
+        }
       }
+      checks.push({
+        code: "OCR_BLOCKED_USED",
+        passed: blockedUsages.length === 0,
+        message:
+          blockedUsages.length === 0
+            ? "OCR BLOCKED 구간이 사용되지 않았습니다."
+            : `OCR BLOCKED 구간을 사용한 SCENE이 있습니다: ${blockedUsages.join(", ")}`,
+        detail: { blockedUsages },
+      });
+    } else {
+      checks.push({
+        code: "OCR_BLOCKED_USED",
+        passed: true,
+        skipped: true,
+        skip_reason: "DISABLED_BY_USER",
+        message: "중국어 검사 OFF로 OCR BLOCKED 검증을 건너뜁니다.",
+      });
     }
-    checks.push({
-      code: "OCR_BLOCKED_USED",
-      passed: blockedUsages.length === 0,
-      message:
-        blockedUsages.length === 0
-          ? "OCR BLOCKED 구간이 사용되지 않았습니다."
-          : `OCR BLOCKED 구간을 사용한 SCENE이 있습니다: ${blockedUsages.join(", ")}`,
-      detail: { blockedUsages },
-    });
 
     // 6. consecutive same-source usage
     let maxRun = 0;

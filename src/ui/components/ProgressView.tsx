@@ -16,6 +16,7 @@ const VISIBLE_STAGES: StageName[] = ["TTS", "COVER", "UPLOAD", "OCR", "CLIP", "A
 
 function StatusIcon({ status }: { status: string }) {
   if (status === "SUCCESS") return <span className="text-[var(--success)]">✓</span>;
+  if (status === "SKIPPED") return <span className="text-[var(--text-muted)]">−</span>;
   if (status === "FAILED") return <span className="text-[var(--danger)]">✕</span>;
   if (status === "RUNNING") return <span className="animate-pulse text-[var(--primary)]">●</span>;
   return <span className="text-[var(--pending)]">○</span>;
@@ -42,6 +43,9 @@ export default function ProgressView({ job }: { job: Job }) {
                 <span className="ml-auto text-xs text-[var(--text-muted)] tabular-nums">
                   {analyzedCount}/{totalSources}
                 </span>
+              )}
+              {stage === "OCR" && state.status === "SKIPPED" && (
+                <span className="ml-auto text-[11px] text-[var(--text-muted)]">사용자 설정으로 건너뜀</span>
               )}
             </li>
           );

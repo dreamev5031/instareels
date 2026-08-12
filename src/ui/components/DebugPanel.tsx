@@ -8,13 +8,20 @@ export default function DebugPanel({ job }: { job: Job }) {
       </summary>
 
       <div className="mt-3 flex flex-col gap-3">
+        <div className="rounded-xl bg-slate-50 px-3 py-2.5 text-xs">
+          <span className="font-semibold">중국어 검사: </span>
+          <span>{job.ocr_enabled ? "사용" : "사용 안 함"}</span>
+          {job.stages.OCR.status === "SKIPPED" && (
+            <p className="mt-1 text-[var(--text-muted)]">사용자 설정으로 검사를 건너뜀 · DISABLED_BY_USER</p>
+          )}
+        </div>
         <div>
           <p className="mb-1 text-xs font-semibold text-[var(--text-muted)]">단계별 상태</p>
           <ul className="flex flex-col gap-1 font-mono text-xs">
             {Object.entries(job.stages).map(([stage, state]) => (
               <li key={stage} className="flex justify-between rounded bg-gray-50 px-2 py-1">
                 <span>{stage}</span>
-                <span>{state.status}</span>
+                <span>{state.status}{state.skipReason ? ` · ${state.skipReason}` : ""}</span>
               </li>
             ))}
           </ul>
@@ -32,7 +39,7 @@ export default function DebugPanel({ job }: { job: Job }) {
           </div>
         </div>
 
-        {Object.keys(job.ocr).length > 0 && (
+        {Object.values(job.ocr).some((segments) => segments.some((segment) => !segment.ocr_safe)) && (
           <div>
             <p className="mb-1 text-xs font-semibold text-[var(--text-muted)]">OCR BLOCKED 구간</p>
             <ul className="flex flex-col gap-1">
@@ -99,7 +106,7 @@ export default function DebugPanel({ job }: { job: Job }) {
               {job.validation.checks.map((c) => (
                 <li key={c.code} className="flex items-start gap-1.5 text-xs">
                   <span className={c.passed ? "text-[var(--success)]" : "text-[var(--danger)]"}>
-                    {c.passed ? "✓" : "✕"}
+                    {c.skipped ? "−" : c.passed ? "✓" : "✕"}
                   </span>
                   <span>{c.message}</span>
                 </li>

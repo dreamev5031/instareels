@@ -22,6 +22,7 @@ export default function HomeScreen() {
   const [ttsLoading, setTtsLoading] = useState(false);
   const [coverSaving, setCoverSaving] = useState(false);
   const [coverDirty, setCoverDirty] = useState(false);
+  const [ocrEnabled, setOcrEnabled] = useState(false);
   const [uploadLoading, setUploadLoading] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [requestError, setRequestError] = useState<string | null>(null);
@@ -49,7 +50,7 @@ export default function HomeScreen() {
     setUploadLoading(true);
     setRequestError(null);
     try {
-      const updated = await uploadVideos(job.job_id, files);
+      const updated = await uploadVideos(job.job_id, files, ocrEnabled);
       setJob(updated);
     } catch (err) {
       setRequestError((err as Error).message);
@@ -79,7 +80,7 @@ export default function HomeScreen() {
     setAnalyzing(true);
     setRequestError(null);
     try {
-      const finalJob = await runAnalysis(job.job_id, (snapshot) => setJob(snapshot));
+      const finalJob = await runAnalysis(job.job_id, ocrEnabled, (snapshot) => setJob(snapshot));
       setJob(finalJob);
     } catch (err) {
       setRequestError((err as Error).message);
@@ -102,7 +103,7 @@ export default function HomeScreen() {
   const ttsDone = job?.stages.TTS.status === "SUCCESS";
   const coverDone = job?.stages.COVER.status === "SUCCESS";
   const uploadDone = job?.stages.UPLOAD.status === "SUCCESS";
-  const showAnalyzeButton = uploadDone && coverDone && !coverDirty && !analyzing && job?.stages.VALIDATE.status !== "SUCCESS" && !failedStage;
+  const showAnalyzeButton = Boolean(ttsDone && uploadDone && coverDone && !coverDirty && !analyzing && job?.stages.VALIDATE.status !== "SUCCESS" && !failedStage);
   const pipelineStarted =
     analyzing ||
     (job && ["OCR", "CLIP", "ALLOCATE", "VALIDATE"].some((s) => job.stages[s as StageName].status !== "PENDING"));
@@ -136,16 +137,21 @@ export default function HomeScreen() {
           />
         )}
 
-        {coverDone && (
-          <UploadStep
-            job={job!}
-            loading={uploadLoading}
-            onUpload={handleUpload}
-            onAnalyze={handleAnalyze}
-            showAnalyzeButton={!!showAnalyzeButton}
-            analyzing={analyzing}
-          />
-        )}
+        <UploadStep
+          job={job}
+          loading={uploadLoading}
+          onUpload={handleUpload}
+          onAnalyze={handleAnalyze}
+          canUpload={Boolean(ttsDone && coverDone && !coverDirty)}
+          canAnalyze={showAnalyzeButton}
+          analyzing={analyzing}
+          analysisComplete={Boolean(showResult)}
+          ttsReady={Boolean(ttsDone)}
+          coverReady={Boolean(coverDone && !coverDirty)}
+          ocrEnabled={ocrEnabled}
+          onOcrEnabledChange={setOcrEnabled}
+          ocrLocked={analyzing || Boolean(showResult)}
+        />
 
         {requestError && (
           <div className="rounded-xl border border-[var(--danger)]/30 bg-[var(--danger-bg)] px-4 py-3 text-sm text-[var(--danger)]">

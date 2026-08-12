@@ -44,6 +44,7 @@ export function createJob(): Job {
     updated_at: now,
     stages,
     cover: createDefaultCoverSettings(),
+    ocr_enabled: false,
     sources: [],
     ocr: {},
     clips: [],
@@ -70,6 +71,7 @@ export function loadJob(jobId: string): Job {
     };
   }
   job.cover ??= createDefaultCoverSettings();
+  job.ocr_enabled ??= false;
   ensureDir(jobCoverDir(jobId));
   return job;
 }
@@ -125,6 +127,21 @@ export function succeedStage(job: Job, stage: StageName): void {
     finishedAt: new Date().toISOString(),
   };
   addLog(job, stage, "info", `${stage} 단계 성공`);
+}
+
+export function skipStage(
+  job: Job,
+  stage: StageName,
+  reason: "DISABLED_BY_USER"
+): void {
+  const now = new Date().toISOString();
+  job.stages[stage] = {
+    status: "SKIPPED",
+    startedAt: now,
+    finishedAt: now,
+    skipReason: reason,
+  };
+  addLog(job, stage, "info", `${stage} 단계를 건너뜁니다.`, { reason });
 }
 
 export function failStage(job: Job, stage: StageName, error: JobError): void {
