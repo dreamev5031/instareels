@@ -1,0 +1,16 @@
+node_modules/
+.next/
+data/
+*.log
+.env*
+.DS_Store
+*.tsbuildinfo
+
+# tesseract language data (downloaded at runtime, not source)
+*.traineddata
+
+# local test media dropped in the project root, never source assets
+/*.mp4
+/*.mov
+/*.mkv
+/*.webm
