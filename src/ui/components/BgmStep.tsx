@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import type { BgmTrack } from "@/bgm/storage";
 import type { BgmSettings, Job } from "@/shared/types";
 import { API_BASE_URL, fetchBgmTracks, uploadBgm } from "@/ui/api";
+import { ttsAudioSrc, ttsAudioVersion } from "@/tts/audioVersion";
 
 function durationLabel(seconds?: number) {
   if (!seconds) return "길이 정보 없음";
@@ -212,6 +213,7 @@ export default function BgmStep({
 
   const empty = !loading && !listError && tracks.length === 0;
   const previewReady = Boolean(settings.bgmEnabled && settings.bgmId && job.tts);
+  const audioVersion = ttsAudioVersion(job.tts);
 
   return (
     <section className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4 shadow-sm" data-testid="bgm-step">
@@ -321,9 +323,10 @@ export default function BgmStep({
       </button>
 
       <audio
+        key={audioVersion}
         ref={ttsAudio}
         preload="metadata"
-        src={`${API_BASE_URL}/api/media/${job.job_id}/tts`}
+        src={ttsAudioSrc(API_BASE_URL, job.job_id, job.tts)}
         onEnded={() => stopPreview(true)}
       />
       {settings.bgmId && (

@@ -3,7 +3,6 @@
 import { useState } from "react";
 import { BgmSettings, Job, STAGE_ORDER, StageName, TtsProviderName } from "@/shared/types";
 import { ApiRequestError, generateTts, renderVideo, runAnalysis, saveBgm, saveCover, saveSubtitle, uploadVideos } from "./api";
-import { DEFAULT_VOICE, SUPPORTED_VOICES } from "@/tts/voices";
 import TtsStep from "./components/TtsStep";
 import UploadStep from "./components/UploadStep";
 import ProgressView from "./components/ProgressView";
@@ -20,11 +19,13 @@ import BgmStep from "./components/BgmStep";
 export default function HomeScreen() {
   const [job, setJob] = useState<Job | null>(null);
   const [ttsText, setTtsText] = useState("");
-  const [ttsProvider, setTtsProvider] = useState<TtsProviderName>("edge");
-  const [voice, setVoice] = useState(DEFAULT_VOICE);
-  const [voiceLabel, setVoiceLabel] = useState(
-    SUPPORTED_VOICES.find((v) => v.shortName === DEFAULT_VOICE)?.friendlyName ?? DEFAULT_VOICE
-  );
+  // ElevenLabs is the app's default TTS provider. Edge is opt-in only, via
+  // the toggle. No voice is preselected here — TtsStep auto-selects a
+  // registered ElevenLabs voice once its list loads (or leaves it empty if
+  // none are registered yet), so this never silently starts as an Edge voice.
+  const [ttsProvider, setTtsProvider] = useState<TtsProviderName>("elevenlabs");
+  const [voice, setVoice] = useState("");
+  const [voiceLabel, setVoiceLabel] = useState("");
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
 
   const [ttsLoading, setTtsLoading] = useState(false);
@@ -45,10 +46,20 @@ export default function HomeScreen() {
     : null;
 
   async function handleGenerateTts() {
+    // Freeze one atomic config from current state right before sending —
+    // the request payload and the debug log below always agree with each
+    // other, and nothing downstream re-reads loose provider/voice state.
+    const config = { provider: ttsProvider, voiceId: voice, voiceAlias: voiceLabel, text: ttsText };
+    if (!config.voiceId) {
+      setRequestError(
+        config.provider === "elevenlabs" ? "ElevenLabs 목소리를 선택해 주세요." : "목소리를 선택해 주세요."
+      );
+      return;
+    }
     setTtsLoading(true);
     setRequestError(null);
     try {
-      const updated = await generateTts(job?.job_id ?? null, ttsText, voice, ttsProvider);
+      const updated = await generateTts(job?.job_id ?? null, config);
       setJob(updated);
     } catch (err) {
       setRequestError((err as Error).message);

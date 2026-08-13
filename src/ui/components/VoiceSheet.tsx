@@ -38,10 +38,18 @@ export default function VoiceSheet({
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   function stopPreview() {
-    audioRef.current?.pause();
+    const audio = audioRef.current;
+    if (audio) {
+      audio.pause();
+      audio.currentTime = 0;
+    }
     setPlayingId(null);
   }
 
+  // Always plays the clicked entry's own voiceId/previewUrl — never an
+  // ambiguous "currently selected" voice — and always fully resets the
+  // shared <audio> element first so a previous voice's buffered audio can
+  // never bleed into this playback.
   async function togglePreview(entry: ElevenLabsVoiceEntry) {
     if (playingId === entry.id) {
       stopPreview();
@@ -57,10 +65,15 @@ export default function VoiceSheet({
         src = result.previewUrl || (result.audioBase64 ? `data:${result.mimeType ?? "audio/mpeg"};base64,${result.audioBase64}` : undefined);
       }
       if (!src) throw new Error("미리듣기를 생성하지 못했습니다.");
-      if (!audioRef.current) audioRef.current = new Audio();
-      audioRef.current.src = src;
-      audioRef.current.onended = () => setPlayingId(null);
-      await audioRef.current.play();
+      const audio = audioRef.current ?? (audioRef.current = new Audio());
+      audio.pause();
+      audio.currentTime = 0;
+      audio.removeAttribute("src");
+      audio.load();
+      audio.src = src;
+      audio.load();
+      audio.onended = () => setPlayingId(null);
+      await audio.play();
       setPlayingId(entry.id);
     } catch (caught) {
       setActionError(caught instanceof Error ? caught.message : "미리듣기에 실패했습니다.");

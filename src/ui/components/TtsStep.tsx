@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Job, TtsProviderName } from "@/shared/types";
 import { SUPPORTED_VOICES } from "@/tts/voices";
 import { API_BASE_URL, fetchElevenLabsVoices } from "@/ui/api";
+import { ttsAudioSrc, ttsAudioVersion } from "@/tts/audioVersion";
 import type { ElevenLabsVoiceEntry } from "@/voices/storage";
 import VoiceSheet from "./VoiceSheet";
 
@@ -18,6 +19,33 @@ interface Props {
   loading: boolean;
   job: Job | null;
   onGenerate: () => void;
+}
+
+const LAST_ELEVENLABS_VOICE_KEY = "instareels.lastElevenLabsVoice";
+
+function readLastElevenLabsVoice(): { voiceId: string; alias: string } | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(LAST_ELEVENLABS_VOICE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { voiceId?: unknown; alias?: unknown };
+    if (typeof parsed.voiceId === "string" && typeof parsed.alias === "string") {
+      return { voiceId: parsed.voiceId, alias: parsed.alias };
+    }
+  } catch {
+    // Corrupt/unexpected localStorage content — treat as "nothing remembered".
+  }
+  return null;
+}
+
+function writeLastElevenLabsVoice(voiceId: string, alias: string) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(LAST_ELEVENLABS_VOICE_KEY, JSON.stringify({ voiceId, alias }));
+  } catch {
+    // Storage unavailable (private mode, quota) — losing the "remember last voice"
+    // convenience is fine, the app still works without it.
+  }
 }
 
 export default function TtsStep({
@@ -38,6 +66,17 @@ export default function TtsStep({
   const [voicesLoading, setVoicesLoading] = useState(false);
   const [voicesError, setVoicesError] = useState<string | null>(null);
 
+  // Read inside the async fetch callback below instead of the effect's
+  // closure, so a voice picked while the list was still loading is never
+  // clobbered by an auto-select that started before the pick happened.
+  const voiceRef = useRef(voice);
+  voiceRef.current = voice;
+
+  function selectElevenLabsVoice(entry: ElevenLabsVoiceEntry) {
+    onVoiceChange(entry.voiceId, entry.alias);
+    writeLastElevenLabsVoice(entry.voiceId, entry.alias);
+  }
+
   useEffect(() => {
     if (provider !== "elevenlabs") return;
     let active = true;
@@ -45,7 +84,16 @@ export default function TtsStep({
     setVoicesError(null);
     fetchElevenLabsVoices()
       .then((items) => {
-        if (active) setElevenLabsVoices(items);
+        if (!active) return;
+        setElevenLabsVoices(items);
+        // Auto-select per spec: prefer the voice the user picked last time,
+        // otherwise the first registered voice. Never leaves a stale Edge
+        // voiceId in place, and never silently falls back to Edge.
+        if (!voiceRef.current && items.length > 0) {
+          const last = readLastElevenLabsVoice();
+          const match = last ? items.find((entry) => entry.voiceId === last.voiceId) : undefined;
+          selectElevenLabsVoice(match ?? items[0]!);
+        }
       })
       .catch(() => {
         if (active) setVoicesError("목소리 목록을 불러오지 못했습니다.");
@@ -56,16 +104,26 @@ export default function TtsStep({
     return () => {
       active = false;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [provider]);
 
   function handleProviderToggle() {
     const next: TtsProviderName = provider === "elevenlabs" ? "edge" : "elevenlabs";
     onProviderChange(next);
     if (next === "edge") {
+      // Switching to Edge must never keep an ElevenLabs voiceId around.
       const first = SUPPORTED_VOICES[0]!;
       onVoiceChange(first.shortName, first.friendlyName);
     } else {
-      onVoiceChange("", "");
+      // Switching to ElevenLabs must never keep an Edge voiceId around.
+      // Try an immediate synchronous pick from any already-cached list
+      // (avoids a visible "등록된 목소리 없음" flash on toggle); the fetch
+      // effect above still runs and handles the first-ever load.
+      const last = readLastElevenLabsVoice();
+      const match = last ? elevenLabsVoices.find((entry) => entry.voiceId === last.voiceId) : undefined;
+      const chosen = match ?? elevenLabsVoices[0];
+      if (chosen) selectElevenLabsVoice(chosen);
+      else onVoiceChange("", "");
     }
   }
 
@@ -73,6 +131,9 @@ export default function TtsStep({
     provider === "edge"
       ? voiceLabel || SUPPORTED_VOICES[0]!.friendlyName
       : voiceLabel || (voicesLoading ? "불러오는 중..." : elevenLabsVoices.length === 0 ? "등록된 목소리 없음" : "목소리 선택");
+
+  const audioVersion = ttsAudioVersion(job?.tts);
+  const audioSrc = job ? ttsAudioSrc(API_BASE_URL, job.job_id, job.tts) : "";
 
   return (
     <section className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4 shadow-sm">
@@ -141,7 +202,7 @@ export default function TtsStep({
             <span>TTS 생성 완료</span>
             <span className="ml-auto tabular-nums">{job.tts.duration.toFixed(2)}초</span>
           </p>
-          <audio className="mt-2 w-full" controls src={`${API_BASE_URL}/api/media/${job.job_id}/tts`} />
+          <audio key={audioVersion} className="mt-2 w-full" controls src={audioSrc} />
         </div>
       )}
 
@@ -158,7 +219,7 @@ export default function TtsStep({
             setSheetOpen(false);
           }}
           onSelectElevenLabs={(entry) => {
-            onVoiceChange(entry.voiceId, entry.alias);
+            selectElevenLabsVoice(entry);
             setSheetOpen(false);
           }}
           onClose={() => setSheetOpen(false)}

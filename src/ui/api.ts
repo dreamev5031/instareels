@@ -104,11 +104,22 @@ export async function uploadBgm(file: File): Promise<{ track: BgmTrack; tracks: 
   return { track: body.track, tracks: body.tracks };
 }
 
-export async function generateTts(jobId: string | null, text: string, voice: string, provider: TtsProviderName = "edge"): Promise<Job> {
+export interface TtsGenerationConfig {
+  provider: TtsProviderName;
+  voiceId: string;
+  voiceAlias: string;
+  text: string;
+}
+
+// provider/voiceId are required (no hidden default) — every caller must be
+// explicit about which provider/voice it means, so a request can never
+// silently fall back to Edge because a param was left unspecified.
+export async function generateTts(jobId: string | null, config: TtsGenerationConfig): Promise<Job> {
+  console.debug(`[TTS] request\nprovider=${config.provider}\nvoiceId=${config.voiceId}\nvoiceAlias=${config.voiceAlias}`);
   const res = await fetch(`${API_BASE_URL}/api/tts`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ jobId, text, voice, provider }),
+    body: JSON.stringify({ jobId, text: config.text, voice: config.voiceId, provider: config.provider }),
   });
   return parseJobResponse(res);
 }
