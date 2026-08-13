@@ -1,7 +1,16 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import type { SubtitleEffect, SubtitleSegment, SubtitleSettings, TtsWordTiming } from "@/shared/types";
+import type { SubtitleSegment, SubtitleSettings } from "@/shared/types";
 import { coverFontFamily } from "@/cover/fonts";
+import {
+  layoutSubtitleText,
+  SUBTITLE_ANIMATION_MS,
+  SUBTITLE_CANVAS,
+  SUBTITLE_CURSOR_BLINK_MS,
+  SUBTITLE_EFFECT_SPEC_BY_ID,
+  SUBTITLE_SAFE_AREA,
+  type SubtitleTextLayout,
+} from "./spec";
 
 function assTime(seconds: number): string {
   const cs = Math.max(0, Math.round(seconds * 100));
@@ -37,88 +46,106 @@ function revealTimes(segment: SubtitleSegment): number[] {
   return output.slice(0, chars.length).map((value) => Math.max(segment.start, Math.min(segment.end - 0.01, value)));
 }
 
-function override(settings: SubtitleSettings, y: number, extra = ""): string {
+function override(settings: SubtitleSettings, y: number, extra = "", position?: string): string {
   const outline = settings.stroke_enabled ? 7 : 0;
   const shadow = settings.shadow_enabled ? 2 : 0;
-  return `{\\an5\\q2\\pos(540,${y})\\fs${settings.size}\\1c${assColor(settings.color)}\\3c&H00000000&\\bord${outline}\\shad${shadow}${extra}}`;
+  return `{\\an5\\q2${position ?? `\\pos(${SUBTITLE_SAFE_AREA.centerX},${y})`}\\fs${settings.size}\\1c${assColor(settings.color)}\\3c&H00000000&\\bord${outline}\\shad${shadow}${extra}}`;
 }
 
 function dialogue(start: number, end: number, name: string, text: string, layer = 0): string {
   return `Dialogue: ${layer},${assTime(start)},${assTime(Math.max(start + 0.01, end))},Default,${name},0,0,0,,${text}`;
 }
 
-function taggedRange(text: string, start: number, end: number, open: string, close: string): string {
-  const chars = Array.from(text);
-  return escapeAss(chars.slice(0, start).join("")) + `{${open}}` + escapeAss(chars.slice(start, end).join("")) + `{${close}}` + escapeAss(chars.slice(end).join(""));
+function laidOutText(layout: SubtitleTextLayout, visibleCharacters = Number.POSITIVE_INFINITY): string {
+  const chars = Array.from(layout.source);
+  const skipped = new Set(layout.skippedBeforeBreak);
+  let output = "";
+  for (let index = 0; index < chars.length && index < visibleCharacters; index += 1) {
+    if (layout.lineBreakBefore === index) output += "\\N";
+    if (!skipped.has(index)) output += escapeAss(chars[index] ?? "");
+  }
+  return output;
 }
 
 function segmentEvents(segment: SubtitleSegment, settings: SubtitleSettings, y: number): string[] {
   const chars = Array.from(segment.text);
   const times = revealTimes(segment);
-  const base = override(settings, y);
+  const layout = layoutSubtitleText(segment.text, settings.size);
+  const fullText = laidOutText(layout);
   const events: string[] = [];
-  const preset: SubtitleEffect = settings.effect;
+  const spec = SUBTITLE_EFFECT_SPEC_BY_ID[settings.effect];
+  const durationMs = Math.max(10, Math.round((segment.end - segment.start) * 1000));
+  const settleMs = Math.max(10, Math.min(durationMs, Math.round(SUBTITLE_ANIMATION_MS * spec.settleRatio)));
 
-  if (preset === "breeze" || preset === "transparent_gradient" || preset === "easy_slide") {
-    const durationMs = Math.max(10, Math.round((segment.end - segment.start) * 1000));
-    const extra = preset === "breeze"
-      ? `\\move(575,${y},540,${y},0,${Math.min(650, durationMs)})\\alpha&HFF&\\blur2\\t(0,${Math.min(650, durationMs)},0.33,\\alpha&H00&\\blur0)`
-      : preset === "transparent_gradient"
-        ? `\\clip(0,0,0,1920)\\t(0,${Math.min(900, durationMs)},0.33,\\clip(0,0,1080,1920))`
-        : `\\move(670,${y},540,${y},0,${Math.min(520, durationMs)})\\alpha&HFF&\\t(0,${Math.min(520, durationMs)},0.33,\\alpha&H00&)`;
-    events.push(dialogue(segment.start, segment.end, `${segment.segment_id}_${preset}`, override(settings, y, extra) + escapeAss(segment.text)));
-    return events;
-  }
-
-  if (preset === "word_zoom") {
-    const words = [...segment.text.matchAll(/\S+/gu)];
-    words.forEach((match, index) => {
-      const startIndex = Array.from(segment.text.slice(0, match.index ?? 0)).length;
-      const endIndex = startIndex + Array.from(match[0]).length;
-      const timing = segment.word_timings[index];
-      const start = Math.max(segment.start, timing?.start ?? times[startIndex] ?? segment.start);
-      const end = Math.min(segment.end, segment.word_timings[index + 1]?.start ?? segment.end);
-      const zoom = taggedRange(segment.text, startIndex, endIndex, "\\fscx118\\fscy118", "\\fscx100\\fscy100");
-      events.push(dialogue(start, end, `${segment.segment_id}_word_${index + 1}`, base + zoom));
+  if (spec.mode === "typing" || spec.mode === "rushed_typing") {
+    chars.forEach((_, index) => {
+      const start = index === 0 ? segment.start : (times[index - 1] ?? segment.start);
+      const end = index + 1 < chars.length ? (times[index] ?? segment.end) : segment.end;
+      const prefix = laidOutText(layout, index + 1);
+      if (spec.mode === "rushed_typing") {
+        events.push(dialogue(start, end, `${segment.segment_id}_char_${index + 1}`, override(settings, y) + prefix));
+        return;
+      }
+      let cursorStart = start;
+      let phase = Math.floor(((cursorStart - segment.start) * 1000) / SUBTITLE_CURSOR_BLINK_MS);
+      while (cursorStart < end - 0.001) {
+        const boundary = segment.start + ((phase + 1) * SUBTITLE_CURSOR_BLINK_MS) / 1000;
+        const cursorEnd = Math.min(end, Math.max(cursorStart + 0.01, boundary));
+        const cursor = phase % 2 === 0 ? "|" : "";
+        events.push(dialogue(cursorStart, cursorEnd, `${segment.segment_id}_char_${index + 1}_blink_${phase}`, override(settings, y) + prefix + cursor));
+        cursorStart = cursorEnd;
+        phase += 1;
+      }
     });
     return events;
   }
 
-  if (preset === "pink_blink") {
-    events.push(dialogue(segment.start, segment.end, `${segment.segment_id}_pink_base`, base + escapeAss(segment.text)));
-    chars.forEach((char, index) => {
-      if (!char.trim()) return;
-      const start = times[index] ?? segment.start;
-      const end = Math.min(segment.end, start + 0.18);
-      events.push(dialogue(start, end, `${segment.segment_id}_pink_${index + 1}`, base + taggedRange(segment.text, index, index + 1, "\\1c&H00B34FFF&", `\\1c${assColor(settings.color)}`), 2));
-    });
+  if (spec.mode === "copybook") {
+    const deltaY = Math.round(1920 * 0.036);
+    const motion = `\\move(${SUBTITLE_SAFE_AREA.centerX},${y + deltaY},${SUBTITLE_SAFE_AREA.centerX},${y},0,${settleMs})`;
+    const extra = `\\alpha&HFF&\\blur2\\t(0,${settleMs},0.33,\\alpha&H00&\\blur0)`;
+    events.push(dialogue(segment.start, segment.end, `${segment.segment_id}_${spec.id}`, override(settings, y, extra, motion) + fullText));
     return events;
   }
 
-  chars.forEach((_, index) => {
-    const start = index === 0 ? segment.start : (times[index - 1] ?? segment.start);
-    const end = index + 1 < chars.length ? (times[index] ?? segment.end) : segment.end;
-    const prefix = escapeAss(chars.slice(0, index + 1).join(""));
-    if (preset === "typewriter" || preset === "rushed_typing") {
-      const cursor = preset === "typewriter" ? "|" : "";
-      events.push(dialogue(start, end, `${segment.segment_id}_char_${index + 1}`, base + prefix + cursor));
-    } else {
-      const prior = escapeAss(chars.slice(0, index).join(""));
-      const current = escapeAss(chars[index] ?? "");
-      const animation = preset === "copybook"
-        ? `\\alpha&HFF&\\blur2\\move(540,${y + 29},540,${y},0,480)\\t(0,480,0.33,\\alpha&H00&\\blur0)`
-        : "\\fscx25\\fscy25\\alpha&HFF&\\t(0,200,0.33,\\fscx116\\fscy116\\alpha&H00&)\\t(200,340,0.33,\\fscx100\\fscy100)";
-      events.push(dialogue(start, end, `${segment.segment_id}_${preset}_${index + 1}_base`, base + prior));
-      events.push(dialogue(start, end, `${segment.segment_id}_${preset}_${index + 1}`, override(settings, y, animation) + current, 2));
+  if (spec.mode === "pop") {
+    const peak = Math.max(10, Math.round(settleMs * 0.64));
+    const extra = `\\fscx30\\fscy30\\alpha&HFF&\\t(0,${peak},0.33,\\fscx114\\fscy114\\alpha&H00&)\\t(${peak},${settleMs},0.33,\\fscx100\\fscy100)`;
+    events.push(dialogue(segment.start, segment.end, `${segment.segment_id}_${spec.id}`, override(settings, y, extra) + fullText));
+    return events;
+  }
+
+  if (spec.mode === "pink_blink") {
+    const pink = "&H00B34FFF&";
+    const normal = assColor(settings.color);
+    let extra = "";
+    for (let offset = 0; offset < durationMs; offset += SUBTITLE_ANIMATION_MS) {
+      const peak = Math.min(durationMs, offset + Math.round(SUBTITLE_ANIMATION_MS * 0.45));
+      const cycleEnd = Math.min(durationMs, offset + SUBTITLE_ANIMATION_MS);
+      extra += `\\t(${offset},${peak},0.33,\\1c${pink})\\t(${peak},${cycleEnd},0.33,\\1c${normal})`;
     }
-  });
+    events.push(dialogue(segment.start, segment.end, `${segment.segment_id}_${spec.id}`, override(settings, y, extra) + fullText));
+    return events;
+  }
+
+  const extra = spec.mode === "breeze"
+    ? `\\alpha&HFF&\\blur2\\t(0,${settleMs},0.33,\\alpha&H00&\\blur0)`
+    : spec.mode === "wipe"
+      ? `\\clip(0,0,0,${SUBTITLE_CANVAS.height})\\t(0,${settleMs},0.33,\\clip(0,0,${SUBTITLE_CANVAS.width},${SUBTITLE_CANVAS.height}))`
+      : `\\alpha&HFF&\\t(0,${settleMs},0.33,\\alpha&H00&)`;
+  const position = spec.mode === "breeze"
+    ? `\\move(${SUBTITLE_SAFE_AREA.centerX + 65},${y},${SUBTITLE_SAFE_AREA.centerX},${y},0,${settleMs})`
+    : spec.mode === "slide"
+      ? `\\move(${SUBTITLE_SAFE_AREA.centerX + 181},${y},${SUBTITLE_SAFE_AREA.centerX},${y},0,${settleMs})`
+      : undefined;
+  events.push(dialogue(segment.start, segment.end, `${segment.segment_id}_${spec.id}`, override(settings, y, extra, position) + fullText));
   return events;
 }
 
 export async function writeAssFile(file: string, segments: SubtitleSegment[], settings: SubtitleSettings, fontFamily = coverFontFamily(settings.font)): Promise<number> {
-  const y = settings.vertical_position === "top" ? 360 : settings.vertical_position === "middle" ? 960 : 1510;
+  const y = SUBTITLE_SAFE_AREA.y[settings.vertical_position];
   const events = segments.flatMap((segment) => segmentEvents(segment, settings, y));
-  const header = `[Script Info]\nScriptType: v4.00+\nPlayResX: 1080\nPlayResY: 1920\nScaledBorderAndShadow: yes\nWrapStyle: 2\nKerning: yes\nYCbCr Matrix: TV.709\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Default,${fontFamily},${settings.size},${assColor(settings.color)},${assColor(settings.color)},&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,${settings.stroke_enabled ? 7 : 0},${settings.shadow_enabled ? 2 : 0},5,64,64,0,1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n`;
+  const header = `[Script Info]\nScriptType: v4.00+\nPlayResX: 1080\nPlayResY: 1920\nScaledBorderAndShadow: yes\nWrapStyle: 2\nKerning: yes\nYCbCr Matrix: TV.709\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Default,${fontFamily},${settings.size},${assColor(settings.color)},${assColor(settings.color)},&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,${settings.stroke_enabled ? 7 : 0},${settings.shadow_enabled ? 2 : 0},5,${SUBTITLE_SAFE_AREA.horizontalMargin},${SUBTITLE_SAFE_AREA.horizontalMargin},0,1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n`;
   await fs.mkdir(path.dirname(file), { recursive: true });
   await fs.writeFile(file, header + events.join("\n") + "\n", "utf8");
   return events.length;

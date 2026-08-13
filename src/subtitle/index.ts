@@ -1,14 +1,13 @@
 import type { Job, SubtitleSegment, SubtitleSettings, TtsWordTiming } from "@/shared/types";
 import { COVER_FONT_KEYS, SUBTITLE_EFFECTS, PipelineError } from "@/shared/types";
 import { addLog, saveJob } from "@/jobs/store";
-
-const MAX_CHARS = 18;
+import { subtitleMaxSegmentChars } from "./spec";
 
 function cleanText(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
 
-function splitSentenceFirst(text: string): Array<{ text: string; start: number; end: number }> {
+function splitSentenceFirst(text: string, maxCharacters: number): Array<{ text: string; start: number; end: number }> {
   const output: Array<{ text: string; start: number; end: number }> = [];
   const sentencePattern = /[^.!?。！？]+[.!?。！？]?/gu;
   for (const sentenceMatch of text.matchAll(sentencePattern)) {
@@ -30,7 +29,7 @@ function splitSentenceFirst(text: string): Array<{ text: string; start: number; 
       const wordStart = sentenceStart + (wordMatch.index ?? 0);
       const wordEnd = wordStart + word.length;
       const candidate = pendingText ? `${pendingText} ${word}` : word;
-      if (Array.from(candidate).length <= MAX_CHARS) {
+      if (Array.from(candidate).length <= maxCharacters) {
         if (pendingStart < 0) pendingStart = wordStart;
         pendingEnd = wordEnd;
         pendingText = candidate;
@@ -39,8 +38,8 @@ function splitSentenceFirst(text: string): Array<{ text: string; start: number; 
       flush();
       const graphemes = Array.from(word);
       let offset = 0;
-      while (graphemes.length > MAX_CHARS) {
-        const part = graphemes.splice(0, MAX_CHARS).join("");
+      while (graphemes.length > maxCharacters) {
+        const part = graphemes.splice(0, maxCharacters).join("");
         output.push({ text: part, start: wordStart + offset, end: wordStart + offset + part.length });
         offset += part.length;
       }
@@ -67,12 +66,12 @@ function fallbackWordTimings(text: string, duration: number): TtsWordTiming[] {
   });
 }
 
-export function buildSubtitleSegments(job: Job): SubtitleSegment[] {
+export function buildSubtitleSegments(job: Job, settings: SubtitleSettings = job.subtitle.settings): SubtitleSegment[] {
   if (!job.tts) throw new PipelineError("RENDER", "SUBTITLE_TIMING_FAILED", "TTS 결과가 없어 자막 타이밍을 만들 수 없습니다.");
   const text = cleanText(job.tts.text);
   const duration = job.tts.duration;
   const providerWords = job.tts.timing?.words?.length ? job.tts.timing.words : fallbackWordTimings(text, duration);
-  const chunks = splitSentenceFirst(text);
+  const chunks = splitSentenceFirst(text, subtitleMaxSegmentChars(settings.size));
   if (!chunks.length || !(duration > 0)) throw new PipelineError("RENDER", "SUBTITLE_TIMING_FAILED", "자막 segment를 생성할 수 없습니다.");
 
   const initial = chunks.map((chunk, index) => {
@@ -111,7 +110,7 @@ export function validateSubtitleSettings(settings: SubtitleSettings): void {
 export function saveSubtitleSettings(job: Job, settings: SubtitleSettings): void {
   try {
     validateSubtitleSettings(settings);
-    const segments = settings.enabled ? buildSubtitleSegments(job) : [];
+    const segments = settings.enabled ? buildSubtitleSegments(job, settings) : [];
     job.subtitle = {
       status: "SUCCESS",
       settings,

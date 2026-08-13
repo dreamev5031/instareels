@@ -7,6 +7,7 @@ import { buildSubtitleSegments, saveSubtitleSettings } from "@/subtitle";
 import { writeAssFile } from "@/subtitle/ass";
 import { createDefaultCoverSettings, createDefaultSubtitleSettings, type Job, type TtsResult, STAGE_ORDER, SUBTITLE_EFFECTS } from "@/shared/types";
 import { runTtsStage } from "@/tts";
+import { layoutSubtitleText, subtitleMaxCharsPerLine, subtitleMaxSegmentChars } from "@/subtitle/spec";
 
 function job(): Job {
   const stages = Object.fromEntries(STAGE_ORDER.map((stage) => [stage, { status: "PENDING" }])) as Job["stages"];
@@ -79,4 +80,51 @@ test("S4: TTS stage accepts a provider-neutral audio/timing contract", async () 
   assert.equal(result?.provider, "elevenlabs");
   assert.equal(result?.audio_path, "eleven.wav");
   assert.equal(result?.timing.source, "provider_word");
+});
+
+test("S5: long captions use the shared safe-width layout and never exceed two lines", () => {
+  const source = job();
+  source.tts!.text = "모바일 화면에서 아주 긴 자막도 안전 영역을 벗어나지 않고 두 줄로 읽혀야 합니다.";
+  const settings = createDefaultSubtitleSettings();
+  const segments = buildSubtitleSegments(source, settings);
+  const lineLimit = subtitleMaxCharsPerLine(settings.size);
+  assert.ok(segments.length >= 2);
+  for (const segment of segments) {
+    assert.ok(Array.from(segment.text).length <= subtitleMaxSegmentChars(settings.size));
+    const layout = layoutSubtitleText(segment.text, settings.size);
+    assert.ok(layout.lines.length <= 2);
+    for (const line of layout.lines) assert.ok(Array.from(line).length <= lineLimit, line);
+  }
+});
+
+test("S6: ASS effects share preview semantics without overlapping character layers", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "instareels-effect-spec-"));
+  try {
+    const source = job();
+    source.tts!.text = "길이가 긴 자막 문구입니다 자연스럽게 두 줄로 표시됩니다.";
+    const settings = createDefaultSubtitleSettings();
+    const segments = buildSubtitleSegments(source, settings);
+
+    const typewriterFile = path.join(root, "typewriter.ass");
+    await writeAssFile(typewriterFile, segments, { ...settings, effect: "typewriter" });
+    const typewriter = await fs.readFile(typewriterFile, "utf8");
+    assert.match(typewriter, /_blink_0/);
+    assert.match(typewriter, /_blink_1/);
+    assert.match(typewriter, /\|/);
+    assert.match(typewriter, /\\N/);
+
+    for (const effect of ["copybook", "flat_popout", "word_zoom"] as const) {
+      const file = path.join(root, `${effect}.ass`);
+      const count = await writeAssFile(file, segments, { ...settings, effect });
+      const content = await fs.readFile(file, "utf8");
+      assert.equal(count, segments.length, effect);
+      assert.doesNotMatch(content, /_base|_char_|_word_\d/, effect);
+      if (effect === "word_zoom") {
+        assert.match(content, /\\fscx30\\fscy30/, effect);
+        assert.doesNotMatch(content, /\\fscx118/, effect);
+      }
+    }
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
 });

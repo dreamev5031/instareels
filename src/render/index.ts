@@ -14,6 +14,7 @@ import {
 import { MediaCommandError, probeOutputMedia, runFfmpeg } from "@/shared/ffmpeg";
 import { prepareRenderFont, readRenderFontFamily } from "./fonts";
 import { writeAssFile } from "@/subtitle/ass";
+import { layoutSubtitleText, SUBTITLE_EFFECT_SPEC_BY_ID } from "@/subtitle/spec";
 
 const OUTPUT_WIDTH = 1080;
 const OUTPUT_HEIGHT = 1920;
@@ -372,7 +373,18 @@ async function generateAndBurnSubtitles(job: Job, onProgress?: RenderProgressCal
   }
   Object.assign(job.subtitle, { ass_file: assFile, event_count: eventCount });
   addLog(job, "RENDER", "info", `ASS 자막 생성 완료: ${job.subtitle.segments.length}개 segment / ${eventCount}개 event`, {
-    substage: "SUBTITLE_GENERATION", ass_file: assFile, font: job.subtitle.settings.font, font_family: subtitleFontFamily, effect: job.subtitle.settings.effect,
+    substage: "SUBTITLE_GENERATION",
+    ass_file: assFile,
+    font: job.subtitle.settings.font,
+    font_family: subtitleFontFamily,
+    effect: job.subtitle.settings.effect,
+    effect_mode: SUBTITLE_EFFECT_SPEC_BY_ID[job.subtitle.settings.effect].mode,
+    effect_source: "COMMON_EFFECT_SPEC",
+    line_breaks: job.subtitle.segments.map((segment) => ({
+      segment_id: segment.segment_id,
+      before: segment.text,
+      lines: layoutSubtitleText(segment.text, job.subtitle.settings.size).lines,
+    })),
   });
   succeedSubstage(job, "SUBTITLE_GENERATION", onProgress);
 

@@ -3,18 +3,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { COVER_FONTS, coverFontFamily } from "@/cover/fonts";
 import type { CoverFontKey, Job, SubtitleEffect, SubtitleSettings, SubtitleVerticalPosition } from "@/shared/types";
-
-const EFFECTS: Array<{ id: SubtitleEffect; label: string }> = [
-  { id: "typewriter", label: "타자기" },
-  { id: "rushed_typing", label: "성급한 타이핑" },
-  { id: "copybook", label: "카피북" },
-  { id: "flat_popout", label: "플랫 팝아웃" },
-  { id: "word_zoom", label: "단어 줌" },
-  { id: "breeze", label: "산들바람" },
-  { id: "transparent_gradient", label: "투명한 구배" },
-  { id: "pink_blink", label: "핑크 블링크" },
-  { id: "easy_slide", label: "이지 슬라이드" },
-];
+import {
+  SUBTITLE_ANIMATION_MS,
+  SUBTITLE_EFFECT_SPECS,
+  SUBTITLE_EFFECT_SPEC_BY_ID,
+  SUBTITLE_LINE_HEIGHT,
+  subtitlePreviewText,
+  subtitleYPercent,
+} from "@/subtitle/spec";
 
 const POSITION_LABELS: Record<SubtitleVerticalPosition, string> = { top: "상단", middle: "중단", bottom: "하단" };
 
@@ -32,8 +28,10 @@ export default function SubtitleStep({ job, saving, onSave, onDirtyChange }: { j
   const [fontOpen, setFontOpen] = useState(false);
   const [replay, setReplay] = useState(0);
   const saved = job.subtitle.status === "SUCCESS";
-  const previewText = useMemo(() => job.subtitle.segments[0]?.text || job.tts?.text.slice(0, 18) || "자막 미리보기", [job]);
+  const previewSource = useMemo(() => job.subtitle.segments[0]?.text || job.tts?.text || "자막 미리보기", [job]);
+  const previewText = useMemo(() => subtitlePreviewText(previewSource, settings.size), [previewSource, settings.size]);
   const selectedFont = COVER_FONTS.find((font) => font.key === settings.font) ?? COVER_FONTS[1]!;
+  const effectSpec = SUBTITLE_EFFECT_SPEC_BY_ID[settings.effect];
   const update = <K extends keyof SubtitleSettings>(key: K, value: SubtitleSettings[K]) => {
     setSettings((previous) => ({ ...previous, [key]: value }));
     onDirtyChange(true);
@@ -41,7 +39,6 @@ export default function SubtitleStep({ job, saving, onSave, onDirtyChange }: { j
   };
   useEffect(() => { setSettings(job.subtitle.settings); }, [job.job_id, job.subtitle.settings]);
 
-  const positionClass = settings.vertical_position === "top" ? "top-[18%]" : settings.vertical_position === "middle" ? "top-1/2 -translate-y-1/2" : "bottom-[18%]";
   const scale = settings.size / 104;
   return <section className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4 shadow-sm" data-testid="subtitle-step">
     <div className="flex items-center justify-between gap-3"><div><p className="text-[10px] font-bold tracking-[.14em] text-[var(--primary)]">SUBTITLE</p><h2 className="mt-1 text-base font-bold">자막 설정</h2></div><button type="button" role="switch" aria-checked={settings.enabled} data-testid="subtitle-toggle" onClick={() => update("enabled", !settings.enabled)} className={`relative h-7 w-12 rounded-full transition ${settings.enabled ? "bg-[var(--primary)]" : "bg-slate-300"}`}><span className={`absolute top-1 h-5 w-5 rounded-full bg-white transition ${settings.enabled ? "left-6" : "left-1"}`} /></button></div>
@@ -49,7 +46,7 @@ export default function SubtitleStep({ job, saving, onSave, onDirtyChange }: { j
 
     <div className="mt-3 flex justify-center rounded-2xl bg-slate-950 p-3">
       <div className="relative aspect-[9/16] w-[min(52vw,190px)] overflow-hidden rounded-xl bg-gradient-to-br from-slate-700 via-slate-900 to-black" data-testid="subtitle-preview">
-        {settings.enabled && <div key={`${settings.effect}-${replay}`} className={`subtitle-preview-effect subtitle-effect-${settings.effect} ${positionClass} absolute inset-x-[6%] text-center font-black leading-[1.22]`} style={{ fontFamily: coverFontFamily(settings.font), fontSize: `${Math.max(10, 15 * scale)}px`, color: settings.color, WebkitTextStroke: settings.stroke_enabled ? "0.8px #000" : "0 transparent", textShadow: settings.shadow_enabled ? "0 2px 4px rgba(0,0,0,.9)" : "none" }}>{previewText}{settings.effect === "typewriter" && <span className="subtitle-cursor">|</span>}</div>}
+        {settings.enabled && <div key={`${settings.effect}-${replay}`} className={`subtitle-preview-effect ${effectSpec.previewClass} absolute inset-x-[6%] -translate-y-1/2 whitespace-pre-line break-words text-center font-black`} style={{ top: `${subtitleYPercent(settings.vertical_position)}%`, fontFamily: coverFontFamily(settings.font), fontSize: `${Math.max(10, 18.3 * scale)}px`, lineHeight: SUBTITLE_LINE_HEIGHT, color: settings.color, WebkitTextStroke: settings.stroke_enabled ? "1.2px #000" : "0 transparent", textShadow: settings.shadow_enabled ? "0 0.5px 1px rgba(0,0,0,.9)" : "none", animationDuration: `${SUBTITLE_ANIMATION_MS}ms` }}>{previewText}{settings.effect === "typewriter" && <span className="subtitle-cursor">|</span>}</div>}
       </div>
     </div>
 
@@ -64,7 +61,7 @@ export default function SubtitleStep({ job, saving, onSave, onDirtyChange }: { j
         <button type="button" aria-pressed={settings.stroke_enabled} onClick={() => update("stroke_enabled", !settings.stroke_enabled)} className={`rounded-xl px-3 text-[11px] font-semibold ${settings.stroke_enabled ? "bg-indigo-50 text-[var(--primary)]" : "bg-slate-100 text-[var(--text-muted)]"}`}>외곽선 {settings.stroke_enabled ? "ON" : "OFF"}</button>
         <button type="button" aria-pressed={settings.shadow_enabled} onClick={() => update("shadow_enabled", !settings.shadow_enabled)} className={`rounded-xl px-3 text-[11px] font-semibold ${settings.shadow_enabled ? "bg-indigo-50 text-[var(--primary)]" : "bg-slate-100 text-[var(--text-muted)]"}`}>그림자 {settings.shadow_enabled ? "ON" : "OFF"}</button>
       </div>
-      <label className="block rounded-xl bg-slate-100 px-3 py-2"><span className="mb-1 block text-[10px] text-[var(--text-muted)]">애니메이션 효과</span><select data-testid="subtitle-effect" value={settings.effect} onChange={(event) => update("effect", event.target.value as SubtitleEffect)} className="w-full bg-transparent text-sm font-semibold outline-none">{EFFECTS.map((effect) => <option key={effect.id} value={effect.id}>{effect.label}</option>)}</select></label>
+      <label className="block rounded-xl bg-slate-100 px-3 py-2"><span className="mb-1 block text-[10px] text-[var(--text-muted)]">애니메이션 효과</span><select data-testid="subtitle-effect" value={settings.effect} onChange={(event) => update("effect", event.target.value as SubtitleEffect)} className="w-full bg-transparent text-sm font-semibold outline-none">{SUBTITLE_EFFECT_SPECS.map((effect) => <option key={effect.id} value={effect.id}>{effect.label}</option>)}</select></label>
     </div>}
     <button type="button" data-testid="save-subtitle-button" disabled={saving} onClick={async () => { await onSave(settings); onDirtyChange(false); }} className="mt-3 w-full rounded-xl bg-[var(--primary)] py-3 text-sm font-semibold text-white disabled:opacity-50">{saving ? "자막 저장 중…" : saved ? "자막 설정 적용" : "자막 설정 저장"}</button>
     {saved && <p className="mt-2 text-center text-[11px] text-[var(--success)]">{settings.enabled ? `${job.subtitle.segments.length}개 자막 segment 준비 완료` : "자막을 사용하지 않습니다."}</p>}

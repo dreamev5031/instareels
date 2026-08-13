@@ -1,4 +1,5 @@
 import { Job } from "@/shared/types";
+import { layoutSubtitleText, SUBTITLE_EFFECT_SPEC_BY_ID } from "@/subtitle/spec";
 
 export default function DebugPanel({ job }: { job: Job }) {
   return (
@@ -31,9 +32,16 @@ export default function DebugPanel({ job }: { job: Job }) {
           <span className="font-semibold">자막: </span>
           <span>{job.subtitle.settings.enabled ? "사용" : "사용 안 함"} · {job.subtitle.status}</span>
           <p className="mt-1 break-all text-[var(--text-muted)]">
-            {job.subtitle.segments.length} segments · {job.subtitle.settings.font} · {job.subtitle.settings.effect}
+            {job.subtitle.segments.length} segments · {job.subtitle.event_count ?? 0} ASS events · {job.subtitle.settings.font} · {SUBTITLE_EFFECT_SPEC_BY_ID[job.subtitle.settings.effect].label} ({job.subtitle.settings.effect})
             {job.subtitle.ass_file ? ` · ${job.subtitle.ass_file}` : ""}
           </p>
+          <p className="mt-1 text-[var(--text-muted)]">preview/render: COMMON_EFFECT_SPEC</p>
+          {job.subtitle.segments.length > 0 && (
+            <div className="mt-2 rounded-lg bg-white px-2 py-1.5 text-[10px] text-[var(--text-muted)]">
+              <span className="font-semibold text-[var(--text)]">line breaks: </span>
+              {job.subtitle.segments.map((segment) => `${segment.segment_id} [${layoutSubtitleText(segment.text, job.subtitle.settings.size).lines.join(" / ")}]`).join(" · ")}
+            </div>
+          )}
           {job.subtitle.error && <pre className="mt-2 whitespace-pre-wrap break-all text-[10px] text-[var(--danger)]">{JSON.stringify(job.subtitle.error, null, 2)}</pre>}
         </div>
 
