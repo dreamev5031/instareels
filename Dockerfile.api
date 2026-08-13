@@ -17,8 +17,15 @@ COPY package.json package-lock.json ./
 RUN npm ci --ignore-scripts
 
 # ---- build --------------------------------------------------------------
+# NEXT_PUBLIC_* vars are inlined into the client bundle at build time. This
+# service serves its own UI directly (browsers hit it, not just app/api/*),
+# so it needs the same push-enabling build arg as Dockerfile.web — without
+# it, the client bundle's VAPID public key is empty, isPushSupported()
+# reads false, and the push-permission prompt silently renders nothing.
 FROM base AS builder
 WORKDIR /app
+ARG NEXT_PUBLIC_WEB_PUSH_VAPID_PUBLIC_KEY
+ENV NEXT_PUBLIC_WEB_PUSH_VAPID_PUBLIC_KEY=$NEXT_PUBLIC_WEB_PUSH_VAPID_PUBLIC_KEY
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN npm run build
