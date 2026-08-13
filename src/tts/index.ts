@@ -42,7 +42,9 @@ export async function runTtsStage(
     throw new PipelineError("TTS", "TTS_EMPTY_TEXT", error.message);
   }
 
-  if (!isSupportedVoice(voice)) {
+  const overrideProviderName = dependencyOverrides.provider?.name;
+  const usesEdgeValidation = !overrideProviderName || overrideProviderName === "edge";
+  if (usesEdgeValidation && !isSupportedVoice(voice)) {
     const error = {
       stage: "TTS" as const,
       error_code: "TTS_GENERATION_FAILED" as const,

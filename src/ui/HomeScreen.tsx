@@ -1,9 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { BgmSettings, Job, STAGE_ORDER, StageName } from "@/shared/types";
+import { BgmSettings, Job, STAGE_ORDER, StageName, TtsProviderName } from "@/shared/types";
 import { ApiRequestError, generateTts, renderVideo, runAnalysis, saveBgm, saveCover, saveSubtitle, uploadVideos } from "./api";
-import { DEFAULT_VOICE } from "@/tts/voices";
+import { DEFAULT_VOICE, SUPPORTED_VOICES } from "@/tts/voices";
 import TtsStep from "./components/TtsStep";
 import UploadStep from "./components/UploadStep";
 import ProgressView from "./components/ProgressView";
@@ -20,7 +20,11 @@ import BgmStep from "./components/BgmStep";
 export default function HomeScreen() {
   const [job, setJob] = useState<Job | null>(null);
   const [ttsText, setTtsText] = useState("");
+  const [ttsProvider, setTtsProvider] = useState<TtsProviderName>("edge");
   const [voice, setVoice] = useState(DEFAULT_VOICE);
+  const [voiceLabel, setVoiceLabel] = useState(
+    SUPPORTED_VOICES.find((v) => v.shortName === DEFAULT_VOICE)?.friendlyName ?? DEFAULT_VOICE
+  );
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
 
   const [ttsLoading, setTtsLoading] = useState(false);
@@ -44,7 +48,7 @@ export default function HomeScreen() {
     setTtsLoading(true);
     setRequestError(null);
     try {
-      const updated = await generateTts(job?.job_id ?? null, ttsText, voice);
+      const updated = await generateTts(job?.job_id ?? null, ttsText, voice, ttsProvider);
       setJob(updated);
     } catch (err) {
       setRequestError((err as Error).message);
@@ -179,8 +183,14 @@ export default function HomeScreen() {
         <TtsStep
           text={ttsText}
           onTextChange={setTtsText}
+          provider={ttsProvider}
+          onProviderChange={setTtsProvider}
           voice={voice}
-          onVoiceChange={setVoice}
+          voiceLabel={voiceLabel}
+          onVoiceChange={(v, label) => {
+            setVoice(v);
+            setVoiceLabel(label);
+          }}
           loading={ttsLoading}
           job={job}
           onGenerate={handleGenerateTts}

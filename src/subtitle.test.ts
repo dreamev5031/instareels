@@ -83,6 +83,31 @@ test("S4: TTS stage accepts a provider-neutral audio/timing contract", async () 
   assert.equal(result?.timing.source, "provider_word");
 });
 
+test("S4b: a real ElevenLabs voice_id (not an Edge shortName) is accepted when a non-edge provider is supplied", async () => {
+  const source = job();
+  source.stages.TTS = { status: "PENDING" };
+  source.tts = undefined;
+  // "21m00Tcm4TlvDq8ikWAM" would fail Edge's isSupportedVoice() check outright —
+  // this proves that check is skipped for non-Edge providers instead of
+  // rejecting every real ElevenLabs voice_id.
+  await runTtsStage(source, "엘레븐랩스 보이스 아이디", "21m00Tcm4TlvDq8ikWAM", {
+    provider: {
+      name: "elevenlabs",
+      async synthesize() {
+        return {
+          provider: "elevenlabs",
+          audioPath: "eleven.mp3",
+          duration: 1.0,
+          timing: { source: "provider_word", words: [{ text: "엘레븐랩스", start: 0, end: 0.5, text_start: 0, text_end: 5 }] },
+        };
+      },
+    },
+  });
+  const result = source.tts as TtsResult | undefined;
+  assert.equal(source.stages.TTS.status, "SUCCESS");
+  assert.equal(result?.voice, "21m00Tcm4TlvDq8ikWAM");
+});
+
 test("S5: long captions use the shared safe-width layout and never exceed two lines", () => {
   const source = job();
   source.tts!.text = "모바일 화면에서 아주 긴 자막도 안전 영역을 벗어나지 않고 두 줄로 읽혀야 합니다.";

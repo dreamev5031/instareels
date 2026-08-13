@@ -66,7 +66,17 @@ export type ErrorCode =
   | "AD_OVERLAY_FAILED"
   | "FINAL_CONCAT_FAILED"
   | "RENDER_OUTPUT_INVALID"
-  | "RENDER_DECODE_FAILED";
+  | "RENDER_DECODE_FAILED"
+  | "ELEVENLABS_NOT_CONFIGURED"
+  | "ELEVENLABS_API_ERROR"
+  | "ELEVENLABS_QUOTA_EXCEEDED"
+  | "VOICE_NOT_FOUND"
+  | "INVALID_VOICE_ID"
+  | "VOICE_ALIAS_REQUIRED"
+  | "VOICE_ID_REQUIRED"
+  | "VOICE_REGISTRY_UNAVAILABLE"
+  | "TIMESTAMP_MISSING"
+  | "TIMESTAMP_PARSE_FAILED";
 
 export const COVER_FONT_KEYS = [
   "nanum-square-round",
@@ -158,6 +168,7 @@ export interface TtsResult {
   provider: TtsProviderName;
   text: string;
   voice: string;
+  voice_alias?: string;
   file: string;
   audio_path: string;
   duration: number;

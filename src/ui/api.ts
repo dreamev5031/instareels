@@ -1,5 +1,6 @@
-import { BgmSettings, CoverSettings, Job, SubtitleSettings, Voice } from "@/shared/types";
+import { BgmSettings, CoverSettings, Job, SubtitleSettings, TtsProviderName, Voice } from "@/shared/types";
 import type { BgmTrack } from "@/bgm/storage";
+import type { ElevenLabsVoiceEntry } from "@/voices/storage";
 
 // Empty string in same-origin/local dev (relative fetches keep working as-is).
 // Set to the backend's public URL when the frontend is deployed separately.
@@ -103,13 +104,48 @@ export async function uploadBgm(file: File): Promise<{ track: BgmTrack; tracks: 
   return { track: body.track, tracks: body.tracks };
 }
 
-export async function generateTts(jobId: string | null, text: string, voice: string): Promise<Job> {
+export async function generateTts(jobId: string | null, text: string, voice: string, provider: TtsProviderName = "edge"): Promise<Job> {
   const res = await fetch(`${API_BASE_URL}/api/tts`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ jobId, text, voice }),
+    body: JSON.stringify({ jobId, text, voice, provider }),
   });
   return parseJobResponse(res);
+}
+
+export async function fetchElevenLabsVoices(): Promise<ElevenLabsVoiceEntry[]> {
+  const res = await fetch(`${API_BASE_URL}/api/voices/elevenlabs`);
+  const body = await res.json().catch(() => ({})) as { voices?: ElevenLabsVoiceEntry[]; message?: string };
+  if (!res.ok) throw new Error(body.message || "ElevenLabs 목소리 목록을 불러오지 못했습니다.");
+  return body.voices ?? [];
+}
+
+export async function registerElevenLabsVoice(voiceId: string, alias: string): Promise<ElevenLabsVoiceEntry> {
+  const res = await fetch(`${API_BASE_URL}/api/voices/elevenlabs`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ voiceId, alias }),
+  });
+  const body = await res.json().catch(() => ({})) as { voice?: ElevenLabsVoiceEntry; error_code?: string; error?: string; message?: string };
+  if (!res.ok || !body.voice) {
+    throw new Error(`${body.error_code ?? body.error ?? `HTTP_${res.status}`}: ${body.message ?? "Voice 등록에 실패했습니다."}`);
+  }
+  return body.voice;
+}
+
+export async function deleteElevenLabsVoice(id: string): Promise<void> {
+  const res = await fetch(`${API_BASE_URL}/api/voices/elevenlabs/${encodeURIComponent(id)}`, { method: "DELETE" });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({})) as { message?: string };
+    throw new Error(body.message || "Voice 삭제에 실패했습니다.");
+  }
+}
+
+export async function previewElevenLabsVoice(id: string): Promise<{ previewUrl?: string; audioBase64?: string; mimeType?: string }> {
+  const res = await fetch(`${API_BASE_URL}/api/voices/elevenlabs/${encodeURIComponent(id)}/preview`, { method: "POST" });
+  const body = await res.json().catch(() => ({})) as { previewUrl?: string; audioBase64?: string; mimeType?: string; message?: string };
+  if (!res.ok) throw new Error(body.message || "미리듣기에 실패했습니다.");
+  return body;
 }
 
 export async function uploadVideos(jobId: string, files: File[], ocrEnabled: boolean): Promise<Job> {
