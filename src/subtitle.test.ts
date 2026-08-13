@@ -94,6 +94,9 @@ test("S5: long captions use the shared safe-width layout and never exceed two li
     const layout = layoutSubtitleText(segment.text, settings.size);
     assert.ok(layout.lines.length <= 2);
     for (const line of layout.lines) assert.ok(Array.from(line).length <= lineLimit, line);
+    if (segment.text.split(/\s+/u).every((word) => Array.from(word).length <= lineLimit)) {
+      assert.equal(layout.lines.join(" "), segment.text);
+    }
   }
 });
 

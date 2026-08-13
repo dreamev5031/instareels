@@ -1,13 +1,13 @@
 import type { Job, SubtitleSegment, SubtitleSettings, TtsWordTiming } from "@/shared/types";
 import { COVER_FONT_KEYS, SUBTITLE_EFFECTS, PipelineError } from "@/shared/types";
 import { addLog, saveJob } from "@/jobs/store";
-import { subtitleMaxSegmentChars } from "./spec";
+import { layoutSubtitleText, subtitleMaxSegmentChars } from "./spec";
 
 function cleanText(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
 
-function splitSentenceFirst(text: string, maxCharacters: number): Array<{ text: string; start: number; end: number }> {
+function splitSentenceFirst(text: string, maxCharacters: number, fontSize: number): Array<{ text: string; start: number; end: number }> {
   const output: Array<{ text: string; start: number; end: number }> = [];
   const sentencePattern = /[^.!?。！？]+[.!?。！？]?/gu;
   for (const sentenceMatch of text.matchAll(sentencePattern)) {
@@ -29,7 +29,9 @@ function splitSentenceFirst(text: string, maxCharacters: number): Array<{ text: 
       const wordStart = sentenceStart + (wordMatch.index ?? 0);
       const wordEnd = wordStart + word.length;
       const candidate = pendingText ? `${pendingText} ${word}` : word;
-      if (Array.from(candidate).length <= maxCharacters) {
+      const layout = layoutSubtitleText(candidate, fontSize);
+      const keepsWholeWords = layout.lines.join(" ") === candidate;
+      if (Array.from(candidate).length <= maxCharacters && (keepsWholeWords || !pendingText)) {
         if (pendingStart < 0) pendingStart = wordStart;
         pendingEnd = wordEnd;
         pendingText = candidate;
@@ -71,7 +73,7 @@ export function buildSubtitleSegments(job: Job, settings: SubtitleSettings = job
   const text = cleanText(job.tts.text);
   const duration = job.tts.duration;
   const providerWords = job.tts.timing?.words?.length ? job.tts.timing.words : fallbackWordTimings(text, duration);
-  const chunks = splitSentenceFirst(text, subtitleMaxSegmentChars(settings.size));
+  const chunks = splitSentenceFirst(text, subtitleMaxSegmentChars(settings.size), settings.size);
   if (!chunks.length || !(duration > 0)) throw new PipelineError("RENDER", "SUBTITLE_TIMING_FAILED", "자막 segment를 생성할 수 없습니다.");
 
   const initial = chunks.map((chunk, index) => {
