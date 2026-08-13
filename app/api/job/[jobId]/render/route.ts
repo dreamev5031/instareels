@@ -1,13 +1,8 @@
 import { jobExists, loadJob, saveJob } from "@/jobs/store";
-import { runRenderStage } from "@/render";
-import type { Job } from "@/shared/types";
+import { enqueueStage, isStageQueuedOrActive } from "@/queue/jobQueue";
+import { queueMaxRetries } from "@/queue/retry";
 
 export const runtime = "nodejs";
-export const maxDuration = 300;
-
-function ndjson(value: unknown): Uint8Array {
-  return new TextEncoder().encode(`${JSON.stringify(value)}\n`);
-}
 
 export async function POST(
   _request: Request,
@@ -18,7 +13,7 @@ export async function POST(
     return Response.json({ error: "JOB_NOT_FOUND", message: `${jobId} JOB을 찾을 수 없습니다.` }, { status: 404 });
   }
   const job = loadJob(jobId);
-  if (job.stages.RENDER.status === "RUNNING") {
+  if (job.stages.RENDER.status === "RUNNING" || (job.queue?.kind === "render" && (job.queue.status === "QUEUED" || job.queue.status === "RUNNING"))) {
     return Response.json({ stage: "RENDER", error_code: "RENDER_ALREADY_RUNNING", message: "이미 영상 렌더가 진행 중입니다.", job }, { status: 409 });
   }
   if (job.stages.VALIDATE.status !== "SUCCESS" || job.validation?.status !== "PASS") {
@@ -35,23 +30,24 @@ export async function POST(
     }, { status: 409 });
   }
 
-  const stream = new ReadableStream<Uint8Array>({
-    async start(controller) {
-      const emit = (snapshot: Job) => controller.enqueue(ndjson({ job: snapshot }));
-      try {
-        await runRenderStage(job, emit);
-      } catch {
-        saveJob(job);
-      } finally {
-        controller.close();
-      }
-    },
-  });
+  if (await isStageQueuedOrActive("render", job.job_id)) {
+    return Response.json({ stage: "RENDER", error_code: "RENDER_ALREADY_RUNNING", message: "이미 영상 렌더가 진행 중입니다.", job }, { status: 409 });
+  }
 
-  return new Response(stream, {
-    headers: {
-      "Content-Type": "application/x-ndjson; charset=utf-8",
-      "Cache-Control": "no-store",
-    },
-  });
+  const now = new Date().toISOString();
+  job.queue = { kind: "render", status: "QUEUED", queuedAt: now, currentStage: "RENDER", retryCount: 0, maxRetries: queueMaxRetries() };
+  saveJob(job);
+
+  try {
+    await enqueueStage({ kind: "render", jobId: job.job_id });
+  } catch {
+    job.queue = undefined;
+    saveJob(job);
+    return Response.json(
+      { job, error: "QUEUE_UNAVAILABLE", error_code: "QUEUE_UNAVAILABLE", message: "작업 큐에 연결할 수 없습니다. 잠시 후 다시 시도해 주세요." },
+      { status: 503 },
+    );
+  }
+
+  return Response.json({ job, job_id: job.job_id, status: "QUEUED" }, { status: 202 });
 }

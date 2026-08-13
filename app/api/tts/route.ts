@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
 import { addLog, createJob, failStage, jobExists, loadJob, resetDownstreamStages, saveJob, startStage } from "@/jobs/store";
-import { runTtsStage } from "@/tts";
-import { ElevenLabsTTSProvider } from "@/tts/elevenlabs";
 import { isSupportedVoice } from "@/tts/voices";
 import { voiceStorage } from "@/voices/storage";
-import { ErrorCode, Job, PipelineError } from "@/shared/types";
+import { enqueueStage, isStageQueuedOrActive } from "@/queue/jobQueue";
+import { queueMaxRetries } from "@/queue/retry";
+import { ErrorCode, Job } from "@/shared/types";
 
 export const runtime = "nodejs";
 
@@ -32,12 +32,28 @@ export async function POST(req: Request) {
   }
 
   const job = body.jobId && jobExists(body.jobId) ? loadJob(body.jobId) : createJob();
+
+  if (job.queue?.kind === "tts" && (job.queue.status === "QUEUED" || job.queue.status === "RUNNING")) {
+    return NextResponse.json(
+      { job, error: "JOB_ALREADY_QUEUED", error_code: "JOB_ALREADY_QUEUED", message: "이미 TTS 생성이 진행 중입니다." },
+      { status: 409 },
+    );
+  }
+
+  const text = (body.text ?? "").trim();
+  if (!text) {
+    return reject(job, "TTS_EMPTY_TEXT", "TTS 텍스트가 비어 있습니다. 나레이션 텍스트를 입력해주세요.");
+  }
+
   const useElevenLabs = body.provider === "elevenlabs";
   const voiceId = (body.voice ?? "").trim();
 
   // Never trust the client's provider label alone — cross-check the voice
   // string against both namespaces so a stale/incorrect provider can't
-  // silently generate with the wrong voice.
+  // silently generate with the wrong voice. This all runs synchronously
+  // before anything is queued, so an obviously-bad request fails fast
+  // with a normal 4xx instead of round-tripping through the worker.
+  let voiceAlias: string | undefined;
   if (useElevenLabs) {
     if (!voiceId) {
       console.debug("[TTS] rejected: elevenlabs provider with empty voiceId");
@@ -57,18 +73,7 @@ export async function POST(req: Request) {
         voice_id: voiceId,
       });
     }
-
-    console.debug(`[TTS]\nprovider=elevenlabs\nvoiceId=${entry.voiceId}\nvoiceAlias=${entry.alias}`);
-    addLog(job, "TTS", "info", "[TTS] 요청 provider/voice 확정", { provider: "elevenlabs", voice_id: entry.voiceId, voice_alias: entry.alias });
-    try {
-      await runTtsStage(job, body.text ?? "", entry.voiceId, { provider: new ElevenLabsTTSProvider() });
-      if (job.tts) job.tts.voice_alias = entry.alias;
-    } catch (err) {
-      if (!(err instanceof PipelineError)) {
-        saveJob(job);
-        return NextResponse.json({ error: "UNEXPECTED_ERROR", message: (err as Error).message, job }, { status: 500 });
-      }
-    }
+    voiceAlias = entry.alias;
   } else {
     if (!isSupportedVoice(voiceId)) {
       const entry = await voiceStorage.findByVoiceId(voiceId);
@@ -81,19 +86,39 @@ export async function POST(req: Request) {
         });
       }
     }
-
-    console.debug(`[TTS]\nprovider=edge\nvoiceId=${voiceId}\nvoiceAlias=`);
-    addLog(job, "TTS", "info", "[TTS] 요청 provider/voice 확정", { provider: "edge", voice_id: voiceId });
-    try {
-      await runTtsStage(job, body.text ?? "", voiceId);
-    } catch (err) {
-      if (!(err instanceof PipelineError)) {
-        saveJob(job);
-        return NextResponse.json({ error: "UNEXPECTED_ERROR", message: (err as Error).message, job }, { status: 500 });
-      }
-    }
   }
+
+  console.debug(`[TTS]\nprovider=${useElevenLabs ? "elevenlabs" : "edge"}\nvoiceId=${voiceId}\nvoiceAlias=${voiceAlias ?? ""}`);
+  addLog(job, "TTS", "info", "[TTS] 요청 provider/voice 확정 — 큐에 등록", {
+    provider: useElevenLabs ? "elevenlabs" : "edge",
+    voice_id: voiceId,
+    voice_alias: voiceAlias,
+  });
+
+  // Guard against double-processing before it even reaches BullMQ's own
+  // jobId-based dedup: a second submit for the same JOB while queued/active
+  // was already rejected above by the job.queue.status check.
+  if (await isStageQueuedOrActive("tts", job.job_id)) {
+    return NextResponse.json(
+      { job, error: "JOB_ALREADY_QUEUED", error_code: "JOB_ALREADY_QUEUED", message: "이미 TTS 생성이 진행 중입니다." },
+      { status: 409 },
+    );
+  }
+
+  const now = new Date().toISOString();
+  job.queue = { kind: "tts", status: "QUEUED", queuedAt: now, retryCount: 0, maxRetries: queueMaxRetries() };
   saveJob(job);
 
-  return NextResponse.json({ job });
+  try {
+    await enqueueStage({ kind: "tts", jobId: job.job_id, text, voice: voiceId, provider: useElevenLabs ? "elevenlabs" : "edge", voiceAlias });
+  } catch {
+    job.queue = undefined;
+    saveJob(job);
+    return NextResponse.json(
+      { job, error: "QUEUE_UNAVAILABLE", error_code: "QUEUE_UNAVAILABLE", message: "작업 큐에 연결할 수 없습니다. 잠시 후 다시 시도해 주세요." },
+      { status: 503 },
+    );
+  }
+
+  return NextResponse.json({ job, job_id: job.job_id, status: "QUEUED" }, { status: 202 });
 }

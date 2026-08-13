@@ -181,78 +181,51 @@ export async function saveCover(
   return parseJobResponse(res);
 }
 
-export async function runAnalysis(
-  jobId: string,
-  ocrEnabled: boolean,
-  onProgress: (job: Job) => void
-): Promise<Job> {
+// The analyze/render stages used to stream NDJSON progress over the same
+// HTTP connection the browser opened to kick them off — which meant the
+// work was tied to that connection staying alive. They now run on a
+// background worker (see src/queue), so these calls just enqueue and
+// return immediately (202); poll fetchJob() for progress instead — see
+// pollJobUntilSettled below.
+export async function startAnalysis(jobId: string, ocrEnabled: boolean): Promise<Job> {
   const res = await fetch(`${API_BASE_URL}/api/analyze`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ jobId, ocrEnabled }),
   });
-
-  if (!res.ok || !res.body) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body.message || body.error || "분석 요청에 실패했습니다.");
-  }
-
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  let lastJob: Job | null = null;
-
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() ?? "";
-    for (const line of lines) {
-      if (!line.trim()) continue;
-      const parsed = JSON.parse(line);
-      if (parsed.job) {
-        lastJob = parsed.job as Job;
-        onProgress(lastJob);
-      }
-    }
-  }
-
-  if (!lastJob) throw new Error("분석 결과를 받지 못했습니다.");
-  return lastJob;
+  return parseJobResponse(res, "OCR");
 }
 
-export async function renderVideo(
+export async function startRender(jobId: string): Promise<Job> {
+  const res = await fetch(`${API_BASE_URL}/api/job/${jobId}/render`, { method: "POST" });
+  return parseJobResponse(res, "RENDER");
+}
+
+export async function fetchJob(jobId: string): Promise<Job> {
+  const res = await fetch(`${API_BASE_URL}/api/job/${jobId}`);
+  return parseJobResponse(res, "REQUEST");
+}
+
+/** Polls fetchJob() until job.queue leaves QUEUED/RUNNING (or reverts to
+ *  undefined, e.g. a synchronous rejection that never reached the queue),
+ *  calling onProgress on every tick so the UI stays live while the tab is
+ *  visible. Polling only drives the UI — the job itself keeps running on
+ *  the server regardless of whether this loop is even running (tab
+ *  backgrounded/closed), see stopSignal for how a caller can end the loop
+ *  early without affecting the server-side job. */
+export async function pollJobUntilSettled(
   jobId: string,
   onProgress: (job: Job) => void,
+  options: { intervalMs?: number; stopSignal?: { stopped: boolean } } = {},
 ): Promise<Job> {
-  const res = await fetch(`${API_BASE_URL}/api/job/${jobId}/render`, { method: "POST" });
-  if (!res.ok || !res.body) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body.message || body.error_code || "영상 렌더 요청에 실패했습니다.");
-  }
-
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  let lastJob: Job | null = null;
+  const intervalMs = options.intervalMs ?? 2500;
   while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() ?? "";
-    for (const line of lines) {
-      if (!line.trim()) continue;
-      const parsed = JSON.parse(line);
-      if (parsed.job) {
-        lastJob = parsed.job as Job;
-        onProgress(lastJob);
-      }
-    }
+    const job = await fetchJob(jobId);
+    onProgress(job);
+    if (!job.queue || job.queue.status === "COMPLETED" || job.queue.status === "FAILED") return job;
+    if (options.stopSignal?.stopped) return job;
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }
-  if (!lastJob) throw new Error("렌더 결과를 받지 못했습니다.");
-  return lastJob;
 }
 
 export async function saveSubtitle(jobId: string, settings: SubtitleSettings): Promise<Job> {
@@ -265,6 +238,18 @@ export async function saveSubtitle(jobId: string, settings: SubtitleSettings): P
   if (!res.ok) throw new Error(body.message || body.error || "자막 설정 저장에 실패했습니다.");
   if (!body.job) throw new Error("자막 설정 결과를 받지 못했습니다.");
   return body.job as Job;
+}
+
+export async function subscribePush(subscription: { endpoint: string; keys: { p256dh: string; auth: string } }, deviceId: string): Promise<void> {
+  const res = await fetch(`${API_BASE_URL}/api/push/subscribe`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ endpoint: subscription.endpoint, keys: subscription.keys, deviceId }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({})) as { message?: string };
+    throw new Error(body.message || "알림 구독에 실패했습니다.");
+  }
 }
 
 export async function saveBgm(jobId: string, settings: BgmSettings): Promise<Job> {

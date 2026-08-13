@@ -5,7 +5,7 @@ const nextConfig: NextConfig = {
   // follow statically, so `output: "standalone"` silently drops files it needs
   // (bmp-js, etc). The Docker image installs a full node_modules instead of
   // relying on traced output — see Dockerfile.
-  serverExternalPackages: ["tesseract.js", "fluent-ffmpeg", "msedge-tts"],
+  serverExternalPackages: ["tesseract.js", "fluent-ffmpeg", "msedge-tts", "bullmq", "ioredis", "web-push"],
   experimental: {
     // Next 16 renamed middlewareClientMaxBodySize to proxyClientMaxBodySize.
     // Keep this above the application-level 180 MiB aggregate file limit so

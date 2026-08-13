@@ -78,7 +78,11 @@ export type ErrorCode =
   | "TIMESTAMP_MISSING"
   | "TIMESTAMP_PARSE_FAILED"
   | "TTS_PROVIDER_VOICE_MISMATCH"
-  | "ELEVENLABS_VOICE_REQUIRED";
+  | "ELEVENLABS_VOICE_REQUIRED"
+  | "JOB_ALREADY_QUEUED"
+  | "QUEUE_UNAVAILABLE"
+  | "PUSH_SUBSCRIPTION_REQUIRED"
+  | "PUSH_NOT_CONFIGURED";
 
 export const COVER_FONT_KEYS = [
   "nanum-square-round",
@@ -419,6 +423,41 @@ export interface RenderResult {
   decode_verified?: boolean;
 }
 
+// A "queue job" wraps one of the three long-running HTTP-triggered stage
+// groups (TTS generation; OCR+CLIP+ALLOCATE+VALIDATE "analyze"; RENDER) so
+// it can run on a background worker instead of inside the request handler.
+// This is deliberately a thin layer on top of the existing `stages`/
+// `render` tracking below, not a replacement for it — QUEUED/RUNNING/
+// COMPLETED/FAILED here means "is the background worker touching this right
+// now", while the granular per-stage state keeps meaning exactly what it
+// always has.
+export type QueueKind = "tts" | "analyze" | "render";
+export type QueueStatus = "QUEUED" | "RUNNING" | "COMPLETED" | "FAILED";
+
+export interface JobQueueMeta {
+  kind: QueueKind;
+  status: QueueStatus;
+  currentStage?: StageName;
+  queuedAt: string;
+  startedAt?: string;
+  completedAt?: string;
+  workerId?: string;
+  retryCount: number;
+  maxRetries: number;
+  lastError?: JobError;
+}
+
+export type NotificationStatus = "PENDING" | "SUCCESS" | "FAILED" | "SKIPPED";
+
+// Push notification delivery is tracked separately from the job's own
+// success/failure so a push failure can never flip a completed render to
+// FAILED (see JobQueueMeta.status, which is unaffected by this).
+export interface JobNotificationState {
+  status: NotificationStatus;
+  sentAt?: string;
+  reason?: string;
+}
+
 export interface Job {
   job_id: string;
   created_at: string;
@@ -438,6 +477,8 @@ export interface Job {
   validation?: ValidationResult;
   render?: RenderResult;
   logs: JobLogEntry[];
+  queue?: JobQueueMeta;
+  notification?: JobNotificationState;
 }
 
 export class PipelineError extends Error {
