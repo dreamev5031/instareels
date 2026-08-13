@@ -5,7 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { buildSubtitleSegments, saveSubtitleSettings } from "@/subtitle";
 import { writeAssFile } from "@/subtitle/ass";
-import { createDefaultCoverSettings, createDefaultSubtitleSettings, type Job, type TtsResult, STAGE_ORDER, SUBTITLE_EFFECTS } from "@/shared/types";
+import { createDefaultBgmSettings, createDefaultCoverSettings, createDefaultSubtitleSettings, type Job, type TtsResult, STAGE_ORDER, SUBTITLE_EFFECTS } from "@/shared/types";
 import { runTtsStage } from "@/tts";
 import { layoutSubtitleText, subtitleMaxCharsPerLine, subtitleMaxSegmentChars } from "@/subtitle/spec";
 
@@ -16,6 +16,7 @@ function job(): Job {
     job_id: "JOB_SUBTITLE_TEST",
     created_at: new Date().toISOString(), updated_at: new Date().toISOString(), stages,
     cover: createDefaultCoverSettings(), subtitle: { status: "PENDING", settings: createDefaultSubtitleSettings(), segments: [] },
+    bgm: createDefaultBgmSettings(),
     ocr_enabled: false, sources: [], ocr: {}, clips: [], scenes: [], logs: [],
     tts: {
       status: "success", provider: "edge", voice: "ko-KR-SunHiNeural", file: "tts.mp3", audio_path: "tts.mp3",

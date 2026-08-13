@@ -4,6 +4,7 @@ import {
   Job,
   JobError,
   JobLogEntry,
+  createDefaultBgmSettings,
   createDefaultCoverSettings,
   createDefaultSubtitleSettings,
   STAGE_ORDER,
@@ -47,6 +48,7 @@ export function createJob(): Job {
     stages,
     cover: createDefaultCoverSettings(),
     subtitle: { status: "PENDING", settings: createDefaultSubtitleSettings(), segments: [] },
+    bgm: createDefaultBgmSettings(),
     ocr_enabled: false,
     sources: [],
     ocr: {},
@@ -65,6 +67,7 @@ export function loadJob(jobId: string): Job {
   for (const stage of STAGE_ORDER) job.stages[stage] ??= { status: "PENDING" };
   job.cover ??= createDefaultCoverSettings();
   job.subtitle ??= { status: "PENDING", settings: createDefaultSubtitleSettings(), segments: [] };
+  job.bgm ??= createDefaultBgmSettings();
   job.tts && (job.tts.provider ??= "edge");
   if (job.tts) {
     job.tts.audio_path ??= job.tts.file;

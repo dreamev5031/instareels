@@ -11,6 +11,7 @@
     "test:subtitle-presets": "tsx scripts/verify-subtitle-presets.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1109.0",
     "@kfonts/bm-dohyeon": "^0.2.1",
     "@kfonts/bm-hanna-pro": "^0.2.0",
     "@kfonts/bm-jua": "^0.2.0",

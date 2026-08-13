@@ -5,7 +5,7 @@ import { runAllocateStage } from "@/allocator";
 import { runCoverStage } from "@/cover";
 import { runClipStage } from "@/clips";
 import { runOcrStage } from "@/ocr";
-import { createDefaultCoverSettings, createDefaultSubtitleSettings, STAGE_ORDER, Job, PipelineError, SourceVideo, StageStatus } from "@/shared/types";
+import { createDefaultBgmSettings, createDefaultCoverSettings, createDefaultSubtitleSettings, STAGE_ORDER, Job, PipelineError, SourceVideo, StageStatus } from "@/shared/types";
 import { runTtsStage } from "@/tts";
 import { MAX_UPLOAD_FILE_BYTES, MAX_UPLOAD_REQUEST_BYTES, MAX_UPLOAD_TOTAL_BYTES, runUploadStage, validateUploadSizes } from "@/upload";
 import { runValidateStage } from "@/validator";
@@ -29,6 +29,7 @@ function makeJob(ttsDuration = 0): Job {
     stages,
     cover: createDefaultCoverSettings(),
     subtitle: { status: "PENDING", settings: createDefaultSubtitleSettings(), segments: [] },
+    bgm: createDefaultBgmSettings(),
     ocr_enabled: false,
     tts:
       ttsDuration > 0

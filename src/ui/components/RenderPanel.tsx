@@ -84,7 +84,7 @@ export default function RenderPanel({
           {rendering ? "영상 렌더 중..." : failed ? "영상 렌더 다시 시도" : "영상 렌더"}
         </button>
       )}
-      {!success && !subtitleReady && <p className="mt-2 text-center text-[11px] text-[var(--warning)]">자막 설정을 저장하면 렌더할 수 있습니다.</p>}
+      {!success && !subtitleReady && <p className="mt-2 text-center text-[11px] text-[var(--warning)]">자막과 BGM 설정을 저장하면 렌더할 수 있습니다.</p>}
     </section>
   );
 }

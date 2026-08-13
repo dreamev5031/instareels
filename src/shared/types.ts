@@ -237,6 +237,20 @@ export function createDefaultSubtitleSettings(): SubtitleSettings {
   };
 }
 
+export interface BgmSettings {
+  bgmEnabled: boolean;
+  bgmId?: string;
+  bgmName?: string;
+  bgmVolume: number;
+}
+
+export function createDefaultBgmSettings(): BgmSettings {
+  return {
+    bgmEnabled: false,
+    bgmVolume: 0.18,
+  };
+}
+
 export type SourceStatus = "PENDING" | "ANALYZING" | "ANALYZED" | "FAILED";
 
 export interface SourceVideo {
@@ -396,6 +410,7 @@ export interface Job {
   tts?: TtsResult;
   cover: CoverSettings;
   subtitle: SubtitleResult;
+  bgm: BgmSettings;
   ocr_enabled: boolean;
   sources: SourceVideo[];
   ocr: Record<string, OcrSegment[]>;

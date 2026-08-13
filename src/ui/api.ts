@@ -1,4 +1,5 @@
-import { CoverSettings, Job, SubtitleSettings, Voice } from "@/shared/types";
+import { BgmSettings, CoverSettings, Job, SubtitleSettings, Voice } from "@/shared/types";
+import type { BgmTrack } from "@/bgm/storage";
 
 // Empty string in same-origin/local dev (relative fetches keep working as-is).
 // Set to the backend's public URL when the frontend is deployed separately.
@@ -76,6 +77,14 @@ export async function fetchVoices(): Promise<Voice[]> {
   const res = await fetch(`${API_BASE_URL}/api/voices`);
   const body = await res.json();
   return body.voices as Voice[];
+}
+
+export async function fetchBgmTracks(): Promise<BgmTrack[]> {
+  const res = await fetch(`${API_BASE_URL}/api/bgm`);
+  if (!res.ok) throw new Error("BGM 목록을 불러오지 못했습니다.");
+  const body = await res.json() as unknown;
+  if (!Array.isArray(body)) throw new Error("BGM 목록 응답이 올바르지 않습니다.");
+  return body as BgmTrack[];
 }
 
 export async function generateTts(jobId: string | null, text: string, voice: string): Promise<Job> {
@@ -193,4 +202,13 @@ export async function saveSubtitle(jobId: string, settings: SubtitleSettings): P
   if (!res.ok) throw new Error(body.message || body.error || "자막 설정 저장에 실패했습니다.");
   if (!body.job) throw new Error("자막 설정 결과를 받지 못했습니다.");
   return body.job as Job;
+}
+
+export async function saveBgm(jobId: string, settings: BgmSettings): Promise<Job> {
+  const res = await fetch(`${API_BASE_URL}/api/job/${jobId}/bgm`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ settings }),
+  });
+  return parseJobResponse(res, "BGM");
 }

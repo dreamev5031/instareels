@@ -15,6 +15,7 @@ import { MediaCommandError, probeOutputMedia, runFfmpeg } from "@/shared/ffmpeg"
 import { prepareRenderFont, readRenderFontFamily } from "./fonts";
 import { writeAssFile } from "@/subtitle/ass";
 import { layoutSubtitleText, SUBTITLE_EFFECT_SPEC_BY_ID } from "@/subtitle/spec";
+import { bgmStorage } from "@/bgm/storage";
 
 const OUTPUT_WIDTH = 1080;
 const OUTPUT_HEIGHT = 1920;
@@ -23,6 +24,38 @@ const COVER_DURATION = 0.1;
 const DURATION_TOLERANCE = 0.18;
 
 export type RenderProgressCallback = (job: Job) => void;
+
+export function buildAudioMuxArgs({
+  videoOnly,
+  ttsPath,
+  ttsDuration,
+  assembled,
+  bgmFile,
+  bgmVolume = 0,
+}: {
+  videoOnly: string;
+  ttsPath: string;
+  ttsDuration: number;
+  assembled: string;
+  bgmFile?: string;
+  bgmVolume?: number;
+}): string[] {
+  const output = [
+    "-c:v", "copy", "-c:a", "aac", "-ar", "24000", "-ac", "1", "-b:a", "144k",
+    "-t", String(ttsDuration), "-video_track_timescale", "30000", "-movflags", "+faststart", assembled,
+  ];
+  if (!bgmFile) {
+    return ["-y", "-i", videoOnly, "-i", ttsPath, "-map", "0:v:0", "-map", "1:a:0", ...output];
+  }
+  const volume = Math.min(1, Math.max(0, bgmVolume));
+  return [
+    "-y", "-i", videoOnly, "-i", ttsPath, "-stream_loop", "-1", "-i", bgmFile,
+    "-filter_complex",
+    `[1:a]volume=1.0[tts];[2:a]volume=${volume},atrim=duration=${ttsDuration},asetpts=PTS-STARTPTS[bgm];` +
+      "[tts][bgm]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[aout]",
+    "-map", "0:v:0", "-map", "[aout]", ...output,
+  ];
+}
 
 type RenderErrorCode = Extract<
   PipelineError["code"],
@@ -263,11 +296,49 @@ async function renderVideoAssembly(job: Job, onProgress?: RenderProgressCallback
   }
 
   const assembled = path.join(renderDir, "assembled.mp4");
-  const muxArgs = [
-    "-y", "-i", videoOnly, "-i", job.tts!.audio_path, "-map", "0:v:0", "-map", "1:a:0",
-    "-c:v", "copy", "-c:a", "aac", "-ar", "24000", "-ac", "1", "-b:a", "144k",
-    "-t", String(job.tts!.duration), "-video_track_timescale", "30000", "-movflags", "+faststart", assembled,
-  ];
+  let muxArgs: string[];
+  if (job.bgm.bgmEnabled) {
+    if (!job.bgm.bgmId) {
+      throw new RenderStepError("VIDEO_ASSEMBLY", "VIDEO_ASSEMBLY_FAILED", "선택한 BGM 정보가 없습니다.", {
+        bgm_enabled: true,
+      });
+    }
+    const bgmFile = path.join(renderDir, "bgm.mp3");
+    try {
+      if (!await bgmStorage.downloadTrack(job.bgm.bgmId, bgmFile)) {
+        throw new Error("BGM_NOT_FOUND");
+      }
+    } catch (caught) {
+      throw new RenderStepError("VIDEO_ASSEMBLY", "VIDEO_ASSEMBLY_FAILED", "선택한 BGM을 Bucket에서 내려받지 못했습니다.", {
+        bgm_id: job.bgm.bgmId,
+        bgm_name: job.bgm.bgmName,
+        stderr: stderrTail(caught),
+      });
+    }
+    const bgmVolume = Math.min(1, Math.max(0, job.bgm.bgmVolume));
+    muxArgs = buildAudioMuxArgs({
+      videoOnly,
+      ttsPath: job.tts!.audio_path,
+      ttsDuration: job.tts!.duration,
+      assembled,
+      bgmFile,
+      bgmVolume,
+    });
+    addLog(job, "RENDER", "info", "TTS와 BGM 오디오 mix 준비", {
+      substage: "VIDEO_ASSEMBLY",
+      tts_volume: 1,
+      bgm_id: job.bgm.bgmId,
+      bgm_name: job.bgm.bgmName,
+      bgm_volume: bgmVolume,
+    });
+  } else {
+    muxArgs = buildAudioMuxArgs({
+      videoOnly,
+      ttsPath: job.tts!.audio_path,
+      ttsDuration: job.tts!.duration,
+      assembled,
+    });
+  }
   try {
     await runFfmpeg(muxArgs);
   } catch (caught) {

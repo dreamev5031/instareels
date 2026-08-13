@@ -1,8 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { Job, STAGE_ORDER, StageName } from "@/shared/types";
-import { ApiRequestError, generateTts, renderVideo, runAnalysis, saveCover, saveSubtitle, uploadVideos } from "./api";
+import { BgmSettings, Job, STAGE_ORDER, StageName } from "@/shared/types";
+import { ApiRequestError, generateTts, renderVideo, runAnalysis, saveBgm, saveCover, saveSubtitle, uploadVideos } from "./api";
 import { DEFAULT_VOICE } from "@/tts/voices";
 import TtsStep from "./components/TtsStep";
 import UploadStep from "./components/UploadStep";
@@ -15,6 +15,7 @@ import type { CoverSettings } from "@/shared/types";
 import RenderPanel from "./components/RenderPanel";
 import SubtitleStep from "./components/SubtitleStep";
 import type { SubtitleSettings } from "@/shared/types";
+import BgmStep from "./components/BgmStep";
 
 export default function HomeScreen() {
   const [job, setJob] = useState<Job | null>(null);
@@ -31,6 +32,8 @@ export default function HomeScreen() {
   const [rendering, setRendering] = useState(false);
   const [subtitleSaving, setSubtitleSaving] = useState(false);
   const [subtitleDirty, setSubtitleDirty] = useState(false);
+  const [bgmSaving, setBgmSaving] = useState(false);
+  const [bgmDirty, setBgmDirty] = useState(false);
   const [requestError, setRequestError] = useState<string | null>(null);
 
   const failedStage: StageName | null = job
@@ -126,6 +129,22 @@ export default function HomeScreen() {
     }
   }
 
+  async function handleBgmSave(settings: BgmSettings) {
+    if (!job) return;
+    setBgmSaving(true);
+    setRequestError(null);
+    try {
+      const updated = await saveBgm(job.job_id, settings);
+      setJob(updated);
+      setBgmDirty(false);
+    } catch (err) {
+      setRequestError((err as Error).message);
+      throw err;
+    } finally {
+      setBgmSaving(false);
+    }
+  }
+
   function handleRetry() {
     if (!failedStage) return;
     if (failedStage === "TTS") {
@@ -206,7 +225,8 @@ export default function HomeScreen() {
           <>
             <ResultSummary job={job} />
             <SubtitleStep job={job} saving={subtitleSaving} onSave={handleSubtitleSave} onDirtyChange={setSubtitleDirty} />
-            <RenderPanel job={job} rendering={rendering} onRender={handleRender} subtitleReady={job.subtitle.status === "SUCCESS" && !subtitleDirty} />
+            <BgmStep job={job} saving={bgmSaving} onSave={handleBgmSave} onDirtyChange={setBgmDirty} />
+            <RenderPanel job={job} rendering={rendering} onRender={handleRender} subtitleReady={job.subtitle.status === "SUCCESS" && !subtitleDirty && !bgmDirty} />
           </>
         )}
       </div>
