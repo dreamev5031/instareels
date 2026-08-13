@@ -1,7 +1,43 @@
 "use client";
 
+import { useState } from "react";
 import type { Job, RenderSubstageName } from "@/shared/types";
 import { API_BASE_URL } from "@/ui/api";
+
+/** iOS Safari has no API to save a file straight to Photos — sharing a File
+ *  through the native share sheet (with "비디오 저장") is the most direct
+ *  route the web platform allows. navigator.share requires a real File (not
+ *  just a URL) for the share sheet to offer "Save Video", so the video is
+ *  fetched into memory first. Everywhere else (Android/desktop) an <a
+ *  download> click still works, and downloaded videos land in the device's
+ *  own gallery/Downloads via the browser's normal handling. */
+async function shareOrDownloadVideo(url: string, filename: string): Promise<void> {
+  const canShareFiles = typeof navigator !== "undefined" && typeof navigator.share === "function" && typeof navigator.canShare === "function";
+  if (canShareFiles) {
+    try {
+      const res = await fetch(url);
+      const blob = await res.blob();
+      const file = new File([blob], filename, { type: blob.type || "video/mp4" });
+      if (navigator.canShare({ files: [file] })) {
+        await navigator.share({ files: [file] });
+        return;
+      }
+    } catch (err) {
+      // AbortError = user closed the share sheet without picking anything —
+      // that's a deliberate cancel, not a failure, so don't also fire a
+      // plain download on top of it.
+      if (err instanceof Error && err.name === "AbortError") return;
+      // Any other failure (fetch/File/share unsupported at runtime despite
+      // the feature check) falls through to the plain <a download> below.
+    }
+  }
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
 
 const SUBSTAGE_LABELS: Record<RenderSubstageName, string> = {
   VIDEO_ASSEMBLY: "본영상 조립",
@@ -28,6 +64,18 @@ export default function RenderPanel({
   const result = job.render;
   const success = stage.status === "SUCCESS" && result?.status === "SUCCESS";
   const failed = stage.status === "FAILED";
+  const [saving, setSaving] = useState(false);
+  const canShareFiles = typeof navigator !== "undefined" && typeof navigator.share === "function" && typeof navigator.canShare === "function";
+
+  async function handleDownload() {
+    if (!result) return;
+    setSaving(true);
+    try {
+      await shareOrDownloadVideo(`${API_BASE_URL}${result.final_media_path}`, `${job.job_id}.mp4`);
+    } finally {
+      setSaving(false);
+    }
+  }
 
   return (
     <section className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4 shadow-sm" data-testid="render-panel">
@@ -73,6 +121,18 @@ export default function RenderPanel({
           <p className="mt-2 text-center text-xs text-[var(--text-muted)]">
             {result.width}×{result.height} · {result.video_codec?.toUpperCase()} / {result.audio_codec?.toUpperCase()} · {result.final_duration?.toFixed(2)}초
           </p>
+          <button
+            type="button"
+            data-testid="download-button"
+            onClick={handleDownload}
+            disabled={saving}
+            className="mt-3 w-full rounded-xl bg-[var(--primary)] py-3 text-sm font-semibold text-white transition active:scale-[0.98] disabled:opacity-50"
+          >
+            {saving ? "저장 준비 중..." : "다운로드"}
+          </button>
+          {canShareFiles && (
+            <p className="mt-2 text-center text-[11px] text-[var(--text-muted)]">공유 시트가 뜨면 &quot;비디오 저장&quot;을 선택하세요 — 사진첩에 바로 저장됩니다.</p>
+          )}
         </div>
       ) : (
         <button
