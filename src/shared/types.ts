@@ -63,6 +63,7 @@ export type ErrorCode =
   | "VIDEO_ASSEMBLY_FAILED"
   | "FONT_PREPARE_FAILED"
   | "COVER_RENDER_FAILED"
+  | "AD_OVERLAY_FAILED"
   | "FINAL_CONCAT_FAILED"
   | "RENDER_OUTPUT_INVALID"
   | "RENDER_DECODE_FAILED";
@@ -356,6 +357,7 @@ export type RenderSubstageName =
   | "VIDEO_ASSEMBLY"
   | "SUBTITLE_GENERATION"
   | "SUBTITLE_BURN"
+  | "AD_OVERLAY"
   | "COVER_RENDER"
   | "FINAL_CONCAT"
   | "OUTPUT_VALIDATE";
@@ -364,6 +366,7 @@ export const RENDER_SUBSTAGE_ORDER: RenderSubstageName[] = [
   "VIDEO_ASSEMBLY",
   "SUBTITLE_GENERATION",
   "SUBTITLE_BURN",
+  "AD_OVERLAY",
   "COVER_RENDER",
   "FINAL_CONCAT",
   "OUTPUT_VALIDATE",
@@ -386,6 +389,7 @@ export interface RenderResult {
   substages: Record<RenderSubstageName, StageState>;
   scene_plan: RenderedScene[];
   assembled_file?: string;
+  body_file?: string;
   cover_file?: string;
   final_file?: string;
   final_media_path?: string;
@@ -412,6 +416,7 @@ export interface Job {
   subtitle: SubtitleResult;
   bgm: BgmSettings;
   ocr_enabled: boolean;
+  ad_label_enabled: boolean;
   sources: SourceVideo[];
   ocr: Record<string, OcrSegment[]>;
   clips: Clip[];

@@ -23,6 +23,13 @@ const OUTPUT_FPS = 30;
 const COVER_DURATION = 0.1;
 const DURATION_TOLERANCE = 0.18;
 
+const AD_LABEL_TEXT = "[광고]";
+const AD_LABEL_FONT = "pretendard" as const;
+const AD_LABEL_FONT_SIZE = 32;
+const AD_LABEL_COLOR = "white@0.55";
+const AD_LABEL_MARGIN_X = 40;
+const AD_LABEL_MARGIN_Y = 90;
+
 export type RenderProgressCallback = (job: Job) => void;
 
 export function buildAudioMuxArgs({
@@ -72,6 +79,7 @@ type RenderErrorCode = Extract<
   | "SUBTITLE_BURN_FAILED"
   | "FONT_PREPARE_FAILED"
   | "COVER_RENDER_FAILED"
+  | "AD_OVERLAY_FAILED"
   | "FINAL_CONCAT_FAILED"
   | "RENDER_OUTPUT_INVALID"
   | "RENDER_DECODE_FAILED"
@@ -505,12 +513,65 @@ async function generateAndBurnSubtitles(job: Job, onProgress?: RenderProgressCal
   succeedSubstage(job, "SUBTITLE_BURN", onProgress);
 }
 
+async function applyAdOverlay(job: Job, onProgress?: RenderProgressCallback) {
+  const bodyFile = job.subtitle.burned_file ?? job.render!.assembled_file!;
+  if (!job.ad_label_enabled) {
+    skipSubstage(job, "AD_OVERLAY", onProgress);
+    job.render!.body_file = bodyFile;
+    saveJob(job);
+    return;
+  }
+
+  startSubstage(job, "AD_OVERLAY", onProgress);
+  const renderDir = jobRenderDir(job.job_id);
+  const fontsDir = path.join(renderDir, "fonts");
+  let fontPath: string;
+  try {
+    fontPath = await prepareRenderFont(AD_LABEL_FONT, fontsDir);
+  } catch (caught) {
+    throw new RenderStepError("AD_OVERLAY", "AD_OVERLAY_FAILED", "[광고] 표시용 폰트를 준비하지 못했습니다.", {
+      font: AD_LABEL_FONT, stderr: stderrTail(caught),
+    });
+  }
+  const textFile = path.join(renderDir, "ad-label.txt");
+  await fs.writeFile(textFile, AD_LABEL_TEXT, "utf8");
+  const outputFile = path.join(renderDir, "ad-overlay.mp4");
+  const filter =
+    `drawtext=fontfile='${escapeFilterPath(fontPath)}':textfile='${escapeFilterPath(textFile)}'` +
+    `:fontcolor=${AD_LABEL_COLOR}:fontsize=${AD_LABEL_FONT_SIZE}:x=w-text_w-${AD_LABEL_MARGIN_X}:y=${AD_LABEL_MARGIN_Y}`;
+  const args = [
+    "-y", "-i", bodyFile, "-vf", filter,
+    "-c:v", "libx264", "-preset", "veryfast", "-crf", "21", "-pix_fmt", "yuv420p",
+    "-c:a", "copy", "-video_track_timescale", "30000", "-movflags", "+faststart", outputFile,
+  ];
+  try {
+    await runFfmpeg(args);
+  } catch (caught) {
+    throw new RenderStepError("AD_OVERLAY", "AD_OVERLAY_FAILED", "우측 상단 [광고] 표시 합성에 실패했습니다.", {
+      font: AD_LABEL_FONT,
+      file_path: outputFile,
+      ffmpeg_command_summary: commandSummary(args),
+      stderr: stderrTail(caught),
+    });
+  }
+  job.render!.body_file = outputFile;
+  addLog(job, "RENDER", "info", "[광고] 표시 합성 완료", {
+    substage: "AD_OVERLAY",
+    font: AD_LABEL_FONT,
+    font_size: AD_LABEL_FONT_SIZE,
+    color: AD_LABEL_COLOR,
+    margin_x: AD_LABEL_MARGIN_X,
+    margin_y: AD_LABEL_MARGIN_Y,
+  });
+  succeedSubstage(job, "AD_OVERLAY", onProgress);
+}
+
 async function concatFinal(job: Job, onProgress?: RenderProgressCallback) {
   startSubstage(job, "FINAL_CONCAT", onProgress);
   const renderDir = jobRenderDir(job.job_id);
   const finalFile = path.join(renderDir, "final.mp4");
   const args = [
-    "-y", "-i", job.render!.cover_file!, "-i", job.subtitle.burned_file ?? job.render!.assembled_file!,
+    "-y", "-i", job.render!.cover_file!, "-i", job.render!.body_file!,
     "-filter_complex",
     "[0:v]setpts=PTS-STARTPTS[v0];[0:a]asetpts=PTS-STARTPTS[a0];" +
       "[1:v]setpts=PTS-STARTPTS[v1];[1:a]asetpts=PTS-STARTPTS[a1];" +
@@ -627,6 +688,7 @@ export async function runRenderStage(job: Job, onProgress?: RenderProgressCallba
     await fs.mkdir(jobRenderDir(job.job_id), { recursive: true });
     await renderVideoAssembly(job, onProgress);
     await generateAndBurnSubtitles(job, onProgress);
+    await applyAdOverlay(job, onProgress);
     await renderCover(job, onProgress);
     await concatFinal(job, onProgress);
     await validateOutput(job, onProgress);

@@ -31,6 +31,7 @@ function makeJob(ttsDuration = 0): Job {
     subtitle: { status: "PENDING", settings: createDefaultSubtitleSettings(), segments: [] },
     bgm: createDefaultBgmSettings(),
     ocr_enabled: false,
+    ad_label_enabled: true,
     tts:
       ttsDuration > 0
         ? { status: "success", provider: "edge", text: "test", voice: "ko-KR-SunHiNeural", file: "tts.mp3", audio_path: "tts.mp3", duration: ttsDuration, timing: { source: "duration_fallback", words: [] } }

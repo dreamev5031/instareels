@@ -7,6 +7,7 @@ const SUBSTAGE_LABELS: Record<RenderSubstageName, string> = {
   VIDEO_ASSEMBLY: "본영상 조립",
   SUBTITLE_GENERATION: "ASS 자막 생성",
   SUBTITLE_BURN: "자막 입히기",
+  AD_OVERLAY: "[광고] 표시 합성",
   COVER_RENDER: "앞표지 생성",
   FINAL_CONCAT: "최종 영상 결합",
   OUTPUT_VALIDATE: "출력 검증",

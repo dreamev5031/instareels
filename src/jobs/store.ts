@@ -50,6 +50,7 @@ export function createJob(): Job {
     subtitle: { status: "PENDING", settings: createDefaultSubtitleSettings(), segments: [] },
     bgm: createDefaultBgmSettings(),
     ocr_enabled: false,
+    ad_label_enabled: true,
     sources: [],
     ocr: {},
     clips: [],
@@ -74,6 +75,7 @@ export function loadJob(jobId: string): Job {
     job.tts.timing ??= { source: "duration_fallback", words: [] };
   }
   job.ocr_enabled ??= false;
+  job.ad_label_enabled ??= true;
   ensureDir(jobCoverDir(jobId));
   ensureDir(jobRenderDir(jobId));
   return job;

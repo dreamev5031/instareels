@@ -17,7 +17,7 @@ function job(): Job {
     created_at: new Date().toISOString(), updated_at: new Date().toISOString(), stages,
     cover: createDefaultCoverSettings(), subtitle: { status: "PENDING", settings: createDefaultSubtitleSettings(), segments: [] },
     bgm: createDefaultBgmSettings(),
-    ocr_enabled: false, sources: [], ocr: {}, clips: [], scenes: [], logs: [],
+    ocr_enabled: false, ad_label_enabled: true, sources: [], ocr: {}, clips: [], scenes: [], logs: [],
     tts: {
       status: "success", provider: "edge", voice: "ko-KR-SunHiNeural", file: "tts.mp3", audio_path: "tts.mp3",
       text: "첫 문장은 짧습니다. 두 번째 문장은 모바일에서 읽기 좋게 적절히 나뉘어야 합니다.", duration: 8,
