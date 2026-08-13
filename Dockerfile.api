@@ -37,7 +37,9 @@ RUN apt-get update \
 ENV NODE_ENV=production
 # Ephemeral by default (matches Railway's non-Volume filesystem) and
 # world-writable, so no explicit chown is needed for any uid. Point this at
-# a mounted Railway Volume path later for persistence, e.g. WORK_DIR=/data.
+# a mounted Railway Volume path later for persistence, e.g. WORK_DIR=/data —
+# Railway always mounts volumes as root:root, so docker-entrypoint.api.sh
+# chowns WORK_DIR at container start before dropping to "nextjs" below.
 ENV WORK_DIR=/tmp/instareels
 
 RUN groupadd --system --gid 1001 nodejs \
@@ -47,10 +49,14 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY --from=builder --chown=nextjs:nodejs /app/.next ./.next
 COPY --from=builder --chown=nextjs:nodejs /app/public ./public
 COPY package.json next.config.ts proxy.ts ./
-
-USER nextjs
+COPY docker-entrypoint.api.sh /docker-entrypoint.api.sh
+RUN chmod +x /docker-entrypoint.api.sh
 
 EXPOSE 3000
+
+# Stays root here (no USER) so the entrypoint can chown a freshly-mounted
+# Volume before it execs into "nextjs" — see docker-entrypoint.api.sh.
+ENTRYPOINT ["/docker-entrypoint.api.sh"]
 
 # Railway injects PORT; `next start` reads it directly. -H 0.0.0.0 makes the
 # server reachable from outside the container instead of localhost-only.
