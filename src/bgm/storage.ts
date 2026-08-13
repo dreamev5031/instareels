@@ -1,9 +1,11 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import path from "node:path";
 import fs from "node:fs/promises";
 import {
   GetObjectCommand,
   HeadObjectCommand,
   ListObjectsV2Command,
+  PutObjectCommand,
   S3Client,
   type GetObjectCommandOutput,
   type _Object as S3Object,
@@ -11,6 +13,14 @@ import {
 
 const BGM_PREFIX = "bgm/";
 const BGM_ID_PATTERN = /^[a-f0-9]{64}$/;
+export const BGM_AUDIO_EXTENSIONS = [".mp3", ".wav", ".m4a", ".aac"] as const;
+
+const CONTENT_TYPE_BY_EXTENSION: Record<string, string> = {
+  ".mp3": "audio/mpeg",
+  ".wav": "audio/wav",
+  ".m4a": "audio/mp4",
+  ".aac": "audio/aac",
+};
 
 export interface BgmTrack {
   id: string;
@@ -21,6 +31,7 @@ export interface BgmTrack {
 export interface BgmStream {
   body: NonNullable<GetObjectCommandOutput["Body"]>;
   contentLength: number;
+  contentType: string;
   contentRange?: string;
 }
 
@@ -77,7 +88,7 @@ export function isValidBgmId(id: string): boolean {
 export function friendlyBgmName(key: string): string {
   const fileName = key.split("/").at(-1) ?? key;
   return fileName
-    .replace(/\.mp3$/iu, "")
+    .replace(/\.(mp3|wav|m4a|aac)$/iu, "")
     .replace(/[_-]+/gu, " ")
     .replace(/\s+/gu, " ")
     .trim();
@@ -115,8 +126,23 @@ function durationFromMetadata(metadata: Record<string, string> | undefined): num
   return Number.isFinite(duration) && duration > 0 ? duration : undefined;
 }
 
-function isBgmMp3Key(key: string | undefined): key is string {
-  return Boolean(key && key.startsWith(BGM_PREFIX) && key.length > BGM_PREFIX.length && /\.mp3$/iu.test(key));
+function isBgmAudioKey(key: string | undefined): key is string {
+  return Boolean(
+    key &&
+    key.startsWith(BGM_PREFIX) &&
+    key.length > BGM_PREFIX.length &&
+    BGM_AUDIO_EXTENSIONS.includes(path.extname(key).toLowerCase() as (typeof BGM_AUDIO_EXTENSIONS)[number]),
+  );
+}
+
+function displayNameFromMetadata(metadata: Record<string, string> | undefined, key: string): string {
+  const encoded = metadata?.["display-name"];
+  if (!encoded) return friendlyBgmName(key);
+  try {
+    return decodeURIComponent(encoded);
+  } catch {
+    return friendlyBgmName(key);
+  }
 }
 
 export class BgmStorage {
@@ -144,7 +170,7 @@ export class BgmStorage {
           ContinuationToken: continuationToken,
         })
       );
-      objects.push(...(response.Contents ?? []).filter((object) => isBgmMp3Key(object.Key)));
+      objects.push(...(response.Contents ?? []).filter((object) => isBgmAudioKey(object.Key)));
       continuationToken = response.IsTruncated ? response.NextContinuationToken : undefined;
     } while (continuationToken);
     return objects;
@@ -157,17 +183,19 @@ export class BgmStorage {
       objects.map(async (object) => {
         const key = object.Key!;
         let durationSeconds: number | undefined;
+        let name = friendlyBgmName(key);
         try {
           const head = await this.client!.send(
             new HeadObjectCommand({ Bucket: this.config!.bucket, Key: key })
           );
           durationSeconds = durationFromMetadata(head.Metadata);
+          name = displayNameFromMetadata(head.Metadata, key);
         } catch {
           // Duration is optional. A metadata lookup failure must not hide a playable track.
         }
         return {
           id: bgmIdForKey(key),
-          name: friendlyBgmName(key),
+          name,
           ...(durationSeconds ? { durationSeconds } : {}),
         };
       })
@@ -183,7 +211,7 @@ export class BgmStorage {
   async streamTrack(id: string, rangeHeader?: string): Promise<BgmStream | undefined> {
     if (!this.config || !this.client || !isValidBgmId(id)) return undefined;
     const key = await this.resolveKey(id);
-    if (!key || !isBgmMp3Key(key)) return undefined;
+    if (!key || !isBgmAudioKey(key)) return undefined;
 
     const head = await this.client.send(
       new HeadObjectCommand({ Bucket: this.config.bucket, Key: key })
@@ -206,6 +234,7 @@ export class BgmStorage {
     return {
       body: response.Body,
       contentLength: range ? range.end - range.start + 1 : size,
+      contentType: response.ContentType ?? head.ContentType ?? CONTENT_TYPE_BY_EXTENSION[path.extname(key).toLowerCase()] ?? "application/octet-stream",
       ...(range ? { contentRange: `bytes ${range.start}-${range.end}/${size}` } : {}),
     };
   }
@@ -215,6 +244,37 @@ export class BgmStorage {
     if (!track) return false;
     await fs.writeFile(destination, Buffer.from(await track.body.transformToByteArray()));
     return true;
+  }
+
+  async uploadTrack(input: {
+    originalFilename: string;
+    buffer: Buffer;
+    durationSeconds: number;
+    codecName: string;
+  }): Promise<BgmTrack> {
+    if (!this.config || !this.client) throw new Error("BGM_BUCKET_NOT_CONFIGURED");
+    const extension = path.extname(input.originalFilename).toLowerCase();
+    if (!BGM_AUDIO_EXTENSIONS.includes(extension as (typeof BGM_AUDIO_EXTENSIONS)[number])) {
+      throw new Error("BGM_UNSUPPORTED_FORMAT");
+    }
+    const name = friendlyBgmName(input.originalFilename) || "BGM";
+    const key = `${BGM_PREFIX}${randomUUID()}${extension}`;
+    await this.client.send(new PutObjectCommand({
+      Bucket: this.config.bucket,
+      Key: key,
+      Body: input.buffer,
+      ContentType: CONTENT_TYPE_BY_EXTENSION[extension],
+      Metadata: {
+        "display-name": encodeURIComponent(name),
+        "duration-seconds": String(input.durationSeconds),
+        codec: input.codecName,
+      },
+    }));
+    return {
+      id: bgmIdForKey(key),
+      name,
+      durationSeconds: input.durationSeconds,
+    };
   }
 }
 

@@ -87,6 +87,22 @@ export async function fetchBgmTracks(): Promise<BgmTrack[]> {
   return body as BgmTrack[];
 }
 
+export async function uploadBgm(file: File): Promise<{ track: BgmTrack; tracks: BgmTrack[] }> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const res = await fetch(`${API_BASE_URL}/api/bgm/upload`, { method: "POST", body: formData });
+  const body = await res.json().catch(() => ({})) as {
+    track?: BgmTrack;
+    tracks?: BgmTrack[];
+    error_code?: string;
+    message?: string;
+  };
+  if (!res.ok || !body.track || !Array.isArray(body.tracks)) {
+    throw new Error(`${body.error_code ?? `HTTP_${res.status}`}: ${body.message ?? "BGM 업로드 실패"}`);
+  }
+  return { track: body.track, tracks: body.tracks };
+}
+
 export async function generateTts(jobId: string | null, text: string, voice: string): Promise<Job> {
   const res = await fetch(`${API_BASE_URL}/api/tts`, {
     method: "POST",

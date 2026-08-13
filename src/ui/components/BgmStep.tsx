@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { BgmTrack } from "@/bgm/storage";
 import type { BgmSettings, Job } from "@/shared/types";
-import { API_BASE_URL, fetchBgmTracks } from "@/ui/api";
+import { API_BASE_URL, fetchBgmTracks, uploadBgm } from "@/ui/api";
 
 function durationLabel(seconds?: number) {
   if (!seconds) return "길이 정보 없음";
@@ -14,12 +14,18 @@ function durationLabel(seconds?: number) {
 function BgmSheet({
   tracks,
   selectedId,
+  uploading,
+  uploadStatus,
   onSelect,
+  onRequestUpload,
   onClose,
 }: {
   tracks: BgmTrack[];
   selectedId?: string;
+  uploading: boolean;
+  uploadStatus: { kind: "success" | "error"; message: string } | null;
   onSelect: (track: BgmTrack) => void;
+  onRequestUpload: () => void;
   onClose: () => void;
 }) {
   return (
@@ -38,6 +44,22 @@ function BgmSheet({
           </button>
         </div>
         <div className="max-h-[65dvh] overflow-y-auto p-2">
+          <div className="border-b border-[var(--border)] p-2">
+            <button
+              type="button"
+              data-testid="bgm-upload-button"
+              disabled={uploading}
+              onClick={onRequestUpload}
+              className="w-full rounded-xl bg-slate-100 py-2.5 text-sm font-semibold text-[var(--primary)] disabled:opacity-50"
+            >
+              {uploading ? "BGM 업로드 중..." : "+ BGM 업로드"}
+            </button>
+            {uploadStatus && (
+              <p className={`mt-2 break-words text-center text-xs ${uploadStatus.kind === "success" ? "text-[var(--success)]" : "text-[var(--danger)]"}`}>
+                {uploadStatus.message}
+              </p>
+            )}
+          </div>
           {tracks.map((track) => {
             const selected = track.id === selectedId;
             return (
@@ -86,6 +108,9 @@ export default function BgmStep({
   const [listError, setListError] = useState<string | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [playing, setPlaying] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [uploadStatus, setUploadStatus] = useState<{ kind: "success" | "error"; message: string } | null>(null);
+  const uploadInput = useRef<HTMLInputElement>(null);
   const ttsAudio = useRef<HTMLAudioElement>(null);
   const bgmAudio = useRef<HTMLAudioElement>(null);
 
@@ -153,6 +178,32 @@ export default function BgmStep({
     setSheetOpen(false);
   }
 
+  async function handleUpload(file: File) {
+    stopPreview(true);
+    setUploading(true);
+    setUploadStatus(null);
+    try {
+      const result = await uploadBgm(file);
+      setTracks(result.tracks);
+      setSettings((previous) => ({
+        ...previous,
+        bgmEnabled: true,
+        bgmId: result.track.id,
+        bgmName: result.track.name,
+      }));
+      onDirtyChange(true);
+      setUploadStatus({ kind: "success", message: "BGM 업로드 완료" });
+    } catch (caught) {
+      setUploadStatus({
+        kind: "error",
+        message: `BGM 업로드 실패 · ${caught instanceof Error ? caught.message : String(caught)}`,
+      });
+    } finally {
+      setUploading(false);
+      if (uploadInput.current) uploadInput.current.value = "";
+    }
+  }
+
   function disableBgm() {
     stopPreview(true);
     setSettings((previous) => ({ bgmEnabled: false, bgmVolume: previous.bgmVolume }));
@@ -169,6 +220,17 @@ export default function BgmStep({
         <h2 className="mt-1 text-base font-bold">배경음악 설정</h2>
       </div>
       <p className="mt-1 text-xs text-[var(--text-muted)]">TTS 볼륨은 고정되며 BGM 볼륨만 조절됩니다.</p>
+      <input
+        ref={uploadInput}
+        data-testid="bgm-upload-input"
+        type="file"
+        accept=".mp3,.wav,.m4a,.aac,audio/mpeg,audio/wav,audio/mp4,audio/aac"
+        className="hidden"
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          if (file) void handleUpload(file);
+        }}
+      />
 
       <div className="mt-3 rounded-xl bg-slate-100 px-3 py-3">
         <span className="block text-[10px] text-[var(--text-muted)]">선택한 BGM</span>
@@ -178,9 +240,18 @@ export default function BgmStep({
       </div>
 
       {empty ? (
-        <p className="mt-3 rounded-xl bg-slate-50 px-3 py-3 text-center text-sm text-[var(--text-muted)]">
-          등록된 BGM이 없습니다.
-        </p>
+        <div className="mt-3 rounded-xl bg-slate-50 px-3 py-3 text-center">
+          <p className="text-sm text-[var(--text-muted)]">등록된 BGM이 없습니다.</p>
+          <button
+            type="button"
+            data-testid="first-bgm-upload-button"
+            disabled={uploading}
+            onClick={() => uploadInput.current?.click()}
+            className="mt-2 rounded-lg bg-white px-4 py-2 text-xs font-semibold text-[var(--primary)] shadow-sm disabled:opacity-50"
+          >
+            {uploading ? "BGM 업로드 중..." : "+ 첫 BGM 업로드"}
+          </button>
+        </div>
       ) : (
         <button
           type="button"
@@ -193,6 +264,11 @@ export default function BgmStep({
         </button>
       )}
       {listError && <p className="mt-2 text-center text-xs text-[var(--text-muted)]">{listError}</p>}
+      {!sheetOpen && uploadStatus && (
+        <p className={`mt-2 break-words text-center text-xs ${uploadStatus.kind === "success" ? "text-[var(--success)]" : "text-[var(--danger)]"}`}>
+          {uploadStatus.message}
+        </p>
+      )}
 
       <button
         type="button"
@@ -259,8 +335,16 @@ export default function BgmStep({
           src={`${API_BASE_URL}/api/bgm/${settings.bgmId}/stream`}
         />
       )}
-      {sheetOpen && tracks.length > 0 && (
-        <BgmSheet tracks={tracks} selectedId={settings.bgmId} onSelect={selectTrack} onClose={() => setSheetOpen(false)} />
+      {sheetOpen && (
+        <BgmSheet
+          tracks={tracks}
+          selectedId={settings.bgmId}
+          uploading={uploading}
+          uploadStatus={uploadStatus}
+          onSelect={selectTrack}
+          onRequestUpload={() => uploadInput.current?.click()}
+          onClose={() => setSheetOpen(false)}
+        />
       )}
     </section>
   );

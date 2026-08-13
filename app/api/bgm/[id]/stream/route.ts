@@ -27,7 +27,7 @@ export async function GET(
       headers: {
         "Accept-Ranges": "bytes",
         "Content-Length": String(track.contentLength),
-        "Content-Type": "audio/mpeg",
+        "Content-Type": track.contentType,
         "Cache-Control": "private, max-age=3600",
         ...(track.contentRange ? { "Content-Range": track.contentRange } : {}),
       },

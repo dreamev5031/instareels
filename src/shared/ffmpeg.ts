@@ -144,6 +144,30 @@ export async function probeAudioDuration(filePath: string): Promise<number> {
   return parseFloat(data.format?.duration ?? "0") || 0;
 }
 
+export interface AudioProbeResult {
+  duration: number;
+  codecName: string;
+  containerFormat: string;
+}
+
+export async function probeAudioMedia(filePath: string): Promise<AudioProbeResult> {
+  const { stdout } = await runFfprobe([
+    "-v", "error", "-print_format", "json", "-show_format", "-show_streams", filePath,
+  ]);
+  const data = JSON.parse(stdout);
+  const audio = (data.streams ?? []).find((stream: { codec_type?: string }) => stream.codec_type === "audio");
+  const duration = Number.parseFloat(data.format?.duration ?? audio?.duration ?? "0") || 0;
+  const codecName = String(audio?.codec_name ?? "");
+  if (!audio || duration <= 0 || !codecName) {
+    throw new Error("ffprobe가 유효한 오디오 스트림과 재생 길이를 확인하지 못했습니다.");
+  }
+  return {
+    duration,
+    codecName,
+    containerFormat: String(data.format?.format_name ?? ""),
+  };
+}
+
 export async function extractFrames(
   videoPath: string,
   outDir: string,
