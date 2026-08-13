@@ -7,6 +7,52 @@ import { addLog, failStage, resetDownstreamStages, startStage, succeedStage } fr
 import { assertTtsReady } from "@/jobs/preconditions";
 
 const SUPPORTED_EXTENSIONS = new Set([".mp4", ".mov"]);
+export const MAX_UPLOAD_FILE_BYTES = 100_000_000;
+export const MAX_UPLOAD_TOTAL_BYTES = 180_000_000;
+export const MAX_UPLOAD_REQUEST_BYTES = 200_000_000;
+
+export interface UploadFileSizeInfo {
+  originalFilename: string;
+  size: number;
+}
+
+export function validateUploadSizes(files: UploadFileSizeInfo[]): void {
+  const totalSize = files.reduce((sum, file) => sum + file.size, 0);
+  const oversized = files.find((file) => file.size > MAX_UPLOAD_FILE_BYTES);
+  if (oversized) {
+    throw new PipelineError(
+      "UPLOAD",
+      "UPLOAD_TOO_LARGE",
+      `개별 영상은 최대 100MB까지 업로드할 수 있습니다: ${oversized.originalFilename}`,
+      {
+        context: {
+          limit_type: "FILE",
+          filename: oversized.originalFilename,
+          file_size: oversized.size,
+          total_size: totalSize,
+          max_file_size: MAX_UPLOAD_FILE_BYTES,
+          max_total_size: MAX_UPLOAD_TOTAL_BYTES,
+        },
+      },
+    );
+  }
+  if (totalSize > MAX_UPLOAD_TOTAL_BYTES) {
+    throw new PipelineError(
+      "UPLOAD",
+      "UPLOAD_TOO_LARGE",
+      "전체 영상은 합계 180MB까지 업로드할 수 있습니다.",
+      {
+        context: {
+          limit_type: "TOTAL",
+          files: files.map((file) => ({ filename: file.originalFilename, size: file.size })),
+          total_size: totalSize,
+          max_file_size: MAX_UPLOAD_FILE_BYTES,
+          max_total_size: MAX_UPLOAD_TOTAL_BYTES,
+        },
+      },
+    );
+  }
+}
 
 export interface UploadStageDependencies {
   probeMedia: typeof probeMedia;
@@ -39,6 +85,22 @@ export async function runUploadStage(
     };
     failStage(job, "UPLOAD", error);
     throw new PipelineError("UPLOAD", "UPLOAD_NO_FILES", error.message);
+  }
+  try {
+    validateUploadSizes(files.map((file) => ({
+      originalFilename: file.originalFilename,
+      size: file.buffer.length,
+    })));
+  } catch (error) {
+    const pipelineError = error as PipelineError;
+    failStage(job, "UPLOAD", {
+      stage: "UPLOAD",
+      error_code: pipelineError.code,
+      message: pipelineError.message,
+      context: pipelineError.context,
+      timestamp: new Date().toISOString(),
+    });
+    throw pipelineError;
   }
 
   const sourcesDir = jobSourcesDir(job.job_id);

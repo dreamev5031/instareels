@@ -7,9 +7,11 @@ import { runClipStage } from "@/clips";
 import { runOcrStage } from "@/ocr";
 import { createDefaultCoverSettings, createDefaultSubtitleSettings, STAGE_ORDER, Job, PipelineError, SourceVideo, StageStatus } from "@/shared/types";
 import { runTtsStage } from "@/tts";
-import { runUploadStage } from "@/upload";
+import { MAX_UPLOAD_FILE_BYTES, MAX_UPLOAD_REQUEST_BYTES, MAX_UPLOAD_TOTAL_BYTES, runUploadStage, validateUploadSizes } from "@/upload";
 import { runValidateStage } from "@/validator";
 import { runRenderStage } from "@/render";
+import { POST as uploadRequest } from "../app/api/upload/route";
+import { ApiRequestError, parseJobResponse } from "@/ui/api";
 
 let jobSequence = 0;
 
@@ -331,6 +333,86 @@ test("P: MP4 and MOV pass extension validation only after a real video probe res
   assert.equal(job.stages.UPLOAD.status, "SUCCESS");
   assert.deepEqual(job.sources.map((source) => source.original_filename), ["h264.mp4", "iphone-hevc.mov"]);
   assert.deepEqual(job.sources.map((source) => source.codec_name), ["hevc", "hevc"]);
+});
+
+test("P2: upload limits distinguish individual and aggregate file sizes", () => {
+  assert.doesNotThrow(() => validateUploadSizes([
+    { originalFilename: "first.mp4", size: 90_000_000 },
+    { originalFilename: "second.mov", size: 90_000_000 },
+  ]));
+  assert.throws(
+    () => validateUploadSizes([{ originalFilename: "large.mp4", size: MAX_UPLOAD_FILE_BYTES + 1 }]),
+    (error: unknown) => {
+      assert.ok(error instanceof PipelineError);
+      assert.equal(error.code, "UPLOAD_TOO_LARGE");
+      assert.equal(error.context?.limit_type, "FILE");
+      assert.equal(error.context?.max_file_size, MAX_UPLOAD_FILE_BYTES);
+      return true;
+    },
+  );
+  assert.throws(
+    () => validateUploadSizes([
+      { originalFilename: "first.mp4", size: 90_000_000 },
+      { originalFilename: "second.mov", size: MAX_UPLOAD_TOTAL_BYTES - 90_000_000 + 1 },
+    ]),
+    (error: unknown) => {
+      assert.ok(error instanceof PipelineError);
+      assert.equal(error.code, "UPLOAD_TOO_LARGE");
+      assert.equal(error.context?.limit_type, "TOTAL");
+      assert.equal(error.context?.max_total_size, MAX_UPLOAD_TOTAL_BYTES);
+      return true;
+    },
+  );
+});
+
+test("P3: malformed and oversized multipart requests always return JSON errors", async () => {
+  const malformed = await uploadRequest(new Request("http://localhost/api/upload", {
+    method: "POST",
+    headers: { "content-type": "multipart/form-data; boundary=broken" },
+    body: "not-a-valid-multipart-body",
+  }));
+  assert.equal(malformed.status, 400);
+  assert.match(malformed.headers.get("content-type") ?? "", /application\/json/);
+  const malformedBody = await malformed.json();
+  assert.equal(malformedBody.error_code, "FORMDATA_PARSE_FAILED");
+
+  const oversized = await uploadRequest(new Request("http://localhost/api/upload", {
+    method: "POST",
+    headers: {
+      "content-type": "multipart/form-data; boundary=unused",
+      "content-length": String(MAX_UPLOAD_REQUEST_BYTES + 1),
+    },
+    body: "unused",
+  }));
+  assert.equal(oversized.status, 413);
+  assert.match(oversized.headers.get("content-type") ?? "", /application\/json/);
+  const oversizedBody = await oversized.json();
+  assert.equal(oversizedBody.error_code, "UPLOAD_TOO_LARGE");
+  assert.equal(oversizedBody.context.limit_type, "REQUEST");
+});
+
+test("P4: frontend response parsing replaces empty or non-JSON bodies with structured errors", async () => {
+  await assert.rejects(
+    parseJobResponse(new Response(null, { status: 502 }), "UPLOAD"),
+    (error: unknown) => {
+      assert.ok(error instanceof ApiRequestError);
+      assert.equal(error.stage, "UPLOAD");
+      assert.equal(error.errorCode, "EMPTY_RESPONSE");
+      assert.doesNotMatch(error.message, /Unexpected end of JSON input/);
+      return true;
+    },
+  );
+  await assert.rejects(
+    parseJobResponse(new Response("<html>failure</html>", {
+      status: 502,
+      headers: { "content-type": "text/html" },
+    }), "UPLOAD"),
+    (error: unknown) => {
+      assert.ok(error instanceof ApiRequestError);
+      assert.equal(error.errorCode, "INVALID_RESPONSE_CONTENT_TYPE");
+      return true;
+    },
+  );
 });
 
 test("Q: render is rejected unless VALIDATE passed", async () => {

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Job, STAGE_ORDER, StageName } from "@/shared/types";
-import { generateTts, renderVideo, runAnalysis, saveCover, saveSubtitle, uploadVideos } from "./api";
+import { ApiRequestError, generateTts, renderVideo, runAnalysis, saveCover, saveSubtitle, uploadVideos } from "./api";
 import { DEFAULT_VOICE } from "@/tts/voices";
 import TtsStep from "./components/TtsStep";
 import UploadStep from "./components/UploadStep";
@@ -59,6 +59,7 @@ export default function HomeScreen() {
       const updated = await uploadVideos(job.job_id, files, ocrEnabled);
       setJob(updated);
     } catch (err) {
+      if (err instanceof ApiRequestError && err.job) setJob(err.job);
       setRequestError((err as Error).message);
     } finally {
       setUploadLoading(false);

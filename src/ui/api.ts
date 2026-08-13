@@ -4,10 +4,72 @@ import { CoverSettings, Job, SubtitleSettings, Voice } from "@/shared/types";
 // Set to the backend's public URL when the frontend is deployed separately.
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "";
 
-async function parseJobResponse(res: Response): Promise<Job> {
-  const body = await res.json();
-  if (body.job) return body.job as Job;
-  throw new Error(body.message || body.error || "알 수 없는 오류가 발생했습니다.");
+type ApiErrorPayload = {
+  stage?: string;
+  error?: string;
+  error_code?: string;
+  message?: string;
+  job?: Job;
+};
+
+export class ApiRequestError extends Error {
+  readonly stage: string;
+  readonly errorCode: string;
+  readonly job?: Job;
+
+  constructor(payload: Required<Pick<ApiErrorPayload, "stage" | "error_code" | "message">> & Pick<ApiErrorPayload, "job">) {
+    super(`${payload.stage} / ${payload.error_code}: ${payload.message}`);
+    this.name = "ApiRequestError";
+    this.stage = payload.stage;
+    this.errorCode = payload.error_code;
+    this.job = payload.job;
+  }
+}
+
+async function responsePayload(res: Response, fallbackStage: string): Promise<ApiErrorPayload> {
+  const contentType = res.headers.get("content-type") ?? "";
+  const text = await res.text();
+  if (!text.trim()) {
+    throw new ApiRequestError({
+      stage: fallbackStage,
+      error_code: "EMPTY_RESPONSE",
+      message: `서버가 빈 응답을 반환했습니다. (HTTP ${res.status})`,
+    });
+  }
+  if (!contentType.toLowerCase().includes("application/json")) {
+    throw new ApiRequestError({
+      stage: fallbackStage,
+      error_code: "INVALID_RESPONSE_CONTENT_TYPE",
+      message: `서버 응답 형식이 올바르지 않습니다. (HTTP ${res.status})`,
+    });
+  }
+  try {
+    return JSON.parse(text) as ApiErrorPayload;
+  } catch {
+    throw new ApiRequestError({
+      stage: fallbackStage,
+      error_code: "INVALID_JSON_RESPONSE",
+      message: `서버 JSON 응답을 읽지 못했습니다. (HTTP ${res.status})`,
+    });
+  }
+}
+
+export async function parseJobResponse(res: Response, fallbackStage = "REQUEST"): Promise<Job> {
+  const body = await responsePayload(res, fallbackStage);
+  if (!res.ok) {
+    throw new ApiRequestError({
+      stage: body.stage ?? fallbackStage,
+      error_code: body.error_code ?? body.error ?? `HTTP_${res.status}`,
+      message: body.message ?? "요청을 처리하지 못했습니다.",
+      job: body.job,
+    });
+  }
+  if (body.job) return body.job;
+  throw new ApiRequestError({
+    stage: body.stage ?? fallbackStage,
+    error_code: body.error_code ?? body.error ?? "JOB_RESPONSE_MISSING",
+    message: body.message ?? "JOB 결과를 받지 못했습니다.",
+  });
 }
 
 export async function fetchVoices(): Promise<Voice[]> {
@@ -30,8 +92,8 @@ export async function uploadVideos(jobId: string, files: File[], ocrEnabled: boo
   formData.append("jobId", jobId);
   formData.append("ocrEnabled", String(ocrEnabled));
   for (const f of files) formData.append("files", f);
-  const res = await fetch(`${API_BASE_URL}/api/upload`, { method: "POST", body: formData });
-  return parseJobResponse(res);
+  const res = await fetch(`${API_BASE_URL}/api/upload?jobId=${encodeURIComponent(jobId)}`, { method: "POST", body: formData });
+  return parseJobResponse(res, "UPLOAD");
 }
 
 export async function saveCover(
