@@ -36,6 +36,7 @@ export async function runAnalysisPipeline(job: Job, onProgress?: PipelineProgres
 
   try {
     runValidateStage(job);
+    if (job.stages.VALIDATE.status === "SUCCESS") job.video_sources_changed = false;
   } finally {
     saveJob(job);
     onProgress?.(job);
