@@ -32,27 +32,15 @@ async function responsePayload(res: Response, fallbackStage: string): Promise<Ap
   const contentType = res.headers.get("content-type") ?? "";
   const text = await res.text();
   if (!text.trim()) {
-    throw new ApiRequestError({
-      stage: fallbackStage,
-      error_code: "EMPTY_RESPONSE",
-      message: `서버가 빈 응답을 반환했습니다. (HTTP ${res.status})`,
-    });
+    throw new ApiRequestError({ stage: fallbackStage, error_code: "EMPTY_RESPONSE", message: `서버가 빈 응답을 반환했습니다. (HTTP ${res.status})` });
   }
   if (!contentType.toLowerCase().includes("application/json")) {
-    throw new ApiRequestError({
-      stage: fallbackStage,
-      error_code: "INVALID_RESPONSE_CONTENT_TYPE",
-      message: `서버 응답 형식이 올바르지 않습니다. (HTTP ${res.status})`,
-    });
+    throw new ApiRequestError({ stage: fallbackStage, error_code: "INVALID_RESPONSE_CONTENT_TYPE", message: `서버 응답 형식이 올바르지 않습니다. (HTTP ${res.status})` });
   }
   try {
     return JSON.parse(text) as ApiErrorPayload;
   } catch {
-    throw new ApiRequestError({
-      stage: fallbackStage,
-      error_code: "INVALID_JSON_RESPONSE",
-      message: `서버 JSON 응답을 읽지 못했습니다. (HTTP ${res.status})`,
-    });
+    throw new ApiRequestError({ stage: fallbackStage, error_code: "INVALID_JSON_RESPONSE", message: `서버 JSON 응답을 읽지 못했습니다. (HTTP ${res.status})` });
   }
 }
 
@@ -67,11 +55,7 @@ export async function parseJobResponse(res: Response, fallbackStage = "REQUEST")
     });
   }
   if (body.job) return body.job;
-  throw new ApiRequestError({
-    stage: body.stage ?? fallbackStage,
-    error_code: body.error_code ?? body.error ?? "JOB_RESPONSE_MISSING",
-    message: body.message ?? "JOB 결과를 받지 못했습니다.",
-  });
+  throw new ApiRequestError({ stage: body.stage ?? fallbackStage, error_code: body.error_code ?? body.error ?? "JOB_RESPONSE_MISSING", message: body.message ?? "JOB 결과를 받지 못했습니다." });
 }
 
 export async function fetchVoices(): Promise<Voice[]> {
@@ -92,15 +76,8 @@ export async function uploadBgm(file: File): Promise<{ track: BgmTrack; tracks: 
   const formData = new FormData();
   formData.append("file", file);
   const res = await fetch(`${API_BASE_URL}/api/bgm/upload`, { method: "POST", body: formData });
-  const body = await res.json().catch(() => ({})) as {
-    track?: BgmTrack;
-    tracks?: BgmTrack[];
-    error_code?: string;
-    message?: string;
-  };
-  if (!res.ok || !body.track || !Array.isArray(body.tracks)) {
-    throw new Error(`${body.error_code ?? `HTTP_${res.status}`}: ${body.message ?? "BGM 업로드 실패"}`);
-  }
+  const body = await res.json().catch(() => ({})) as { track?: BgmTrack; tracks?: BgmTrack[]; error_code?: string; message?: string };
+  if (!res.ok || !body.track || !Array.isArray(body.tracks)) throw new Error(`${body.error_code ?? `HTTP_${res.status}`}: ${body.message ?? "BGM 업로드 실패"}`);
   return { track: body.track, tracks: body.tracks };
 }
 
@@ -111,9 +88,6 @@ export interface TtsGenerationConfig {
   text: string;
 }
 
-// provider/voiceId are required (no hidden default) — every caller must be
-// explicit about which provider/voice it means, so a request can never
-// silently fall back to Edge because a param was left unspecified.
 export async function generateTts(jobId: string | null, config: TtsGenerationConfig): Promise<Job> {
   console.debug(`[TTS] request\nprovider=${config.provider}\nvoiceId=${config.voiceId}\nvoiceAlias=${config.voiceAlias}`);
   const res = await fetch(`${API_BASE_URL}/api/tts`, {
@@ -132,15 +106,9 @@ export async function fetchElevenLabsVoices(): Promise<ElevenLabsVoiceEntry[]> {
 }
 
 export async function registerElevenLabsVoice(voiceId: string, alias: string): Promise<ElevenLabsVoiceEntry> {
-  const res = await fetch(`${API_BASE_URL}/api/voices/elevenlabs`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ voiceId, alias }),
-  });
+  const res = await fetch(`${API_BASE_URL}/api/voices/elevenlabs`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ voiceId, alias }) });
   const body = await res.json().catch(() => ({})) as { voice?: ElevenLabsVoiceEntry; error_code?: string; error?: string; message?: string };
-  if (!res.ok || !body.voice) {
-    throw new Error(`${body.error_code ?? body.error ?? `HTTP_${res.status}`}: ${body.message ?? "Voice 등록에 실패했습니다."}`);
-  }
+  if (!res.ok || !body.voice) throw new Error(`${body.error_code ?? body.error ?? `HTTP_${res.status}`}: ${body.message ?? "Voice 등록에 실패했습니다."}`);
   return body.voice;
 }
 
@@ -168,11 +136,12 @@ export async function uploadVideos(jobId: string, files: File[], ocrEnabled: boo
   return parseJobResponse(res, "UPLOAD");
 }
 
-export async function saveCover(
-  jobId: string,
-  file: File | null,
-  settings: Omit<CoverSettings, "image">
-): Promise<Job> {
+export async function deleteUploadedSource(jobId: string, sourceId: string): Promise<Job> {
+  const res = await fetch(`${API_BASE_URL}/api/upload?jobId=${encodeURIComponent(jobId)}&sourceId=${encodeURIComponent(sourceId)}`, { method: "DELETE" });
+  return parseJobResponse(res, "UPLOAD");
+}
+
+export async function saveCover(jobId: string, file: File | null, settings: Omit<CoverSettings, "image">): Promise<Job> {
   const formData = new FormData();
   formData.append("jobId", jobId);
   formData.append("settings", JSON.stringify(settings));
@@ -181,18 +150,8 @@ export async function saveCover(
   return parseJobResponse(res);
 }
 
-// The analyze/render stages used to stream NDJSON progress over the same
-// HTTP connection the browser opened to kick them off — which meant the
-// work was tied to that connection staying alive. They now run on a
-// background worker (see src/queue), so these calls just enqueue and
-// return immediately (202); poll fetchJob() for progress instead — see
-// pollJobUntilSettled below.
 export async function startAnalysis(jobId: string, ocrEnabled: boolean): Promise<Job> {
-  const res = await fetch(`${API_BASE_URL}/api/analyze`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ jobId, ocrEnabled }),
-  });
+  const res = await fetch(`${API_BASE_URL}/api/analyze`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ jobId, ocrEnabled }) });
   return parseJobResponse(res, "OCR");
 }
 
@@ -206,13 +165,6 @@ export async function fetchJob(jobId: string): Promise<Job> {
   return parseJobResponse(res, "REQUEST");
 }
 
-/** Polls fetchJob() until job.queue leaves QUEUED/RUNNING (or reverts to
- *  undefined, e.g. a synchronous rejection that never reached the queue),
- *  calling onProgress on every tick so the UI stays live while the tab is
- *  visible. Polling only drives the UI — the job itself keeps running on
- *  the server regardless of whether this loop is even running (tab
- *  backgrounded/closed), see stopSignal for how a caller can end the loop
- *  early without affecting the server-side job. */
 export async function pollJobUntilSettled(
   jobId: string,
   onProgress: (job: Job) => void,
@@ -229,11 +181,7 @@ export async function pollJobUntilSettled(
 }
 
 export async function saveSubtitle(jobId: string, settings: SubtitleSettings): Promise<Job> {
-  const res = await fetch(`${API_BASE_URL}/api/job/${jobId}/subtitle`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ settings }),
-  });
+  const res = await fetch(`${API_BASE_URL}/api/job/${jobId}/subtitle`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ settings }) });
   const body = await res.json();
   if (!res.ok) throw new Error(body.message || body.error || "자막 설정 저장에 실패했습니다.");
   if (!body.job) throw new Error("자막 설정 결과를 받지 못했습니다.");
@@ -241,11 +189,7 @@ export async function saveSubtitle(jobId: string, settings: SubtitleSettings): P
 }
 
 export async function subscribePush(subscription: { endpoint: string; keys: { p256dh: string; auth: string } }, deviceId: string): Promise<void> {
-  const res = await fetch(`${API_BASE_URL}/api/push/subscribe`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ endpoint: subscription.endpoint, keys: subscription.keys, deviceId }),
-  });
+  const res = await fetch(`${API_BASE_URL}/api/push/subscribe`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ endpoint: subscription.endpoint, keys: subscription.keys, deviceId }) });
   if (!res.ok) {
     const body = await res.json().catch(() => ({})) as { message?: string };
     throw new Error(body.message || "알림 구독에 실패했습니다.");
@@ -253,10 +197,6 @@ export async function subscribePush(subscription: { endpoint: string; keys: { p2
 }
 
 export async function saveBgm(jobId: string, settings: BgmSettings): Promise<Job> {
-  const res = await fetch(`${API_BASE_URL}/api/job/${jobId}/bgm`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ settings }),
-  });
+  const res = await fetch(`${API_BASE_URL}/api/job/${jobId}/bgm`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ settings }) });
   return parseJobResponse(res, "BGM");
 }
