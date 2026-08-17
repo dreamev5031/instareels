@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { BgmSettings, Job, QueueKind, STAGE_ORDER, StageName, TtsProviderName } from "@/shared/types";
 import {
   ApiRequestError,
+  deleteUploadedSource,
   fetchJob,
   generateTts,
   pollJobUntilSettled,
@@ -45,10 +46,6 @@ export default function HomeScreen({ initialJobId }: { initialJobId?: string } =
   const [job, setJob] = useState<Job | null>(null);
   const [hydrating, setHydrating] = useState(true);
   const [ttsText, setTtsText] = useState("");
-  // ElevenLabs is the app's default TTS provider. Edge is opt-in only, via
-  // the toggle. No voice is preselected here — TtsStep auto-selects a
-  // registered ElevenLabs voice once its list loads (or leaves it empty if
-  // none are registered yet), so this never silently starts as an Edge voice.
   const [ttsProvider, setTtsProvider] = useState<TtsProviderName>("elevenlabs");
   const [voice, setVoice] = useState("");
   const [voiceLabel, setVoiceLabel] = useState("");
@@ -68,16 +65,8 @@ export default function HomeScreen({ initialJobId }: { initialJobId?: string } =
   const [requestError, setRequestError] = useState<string | null>(null);
   const [showPushPrompt, setShowPushPrompt] = useState(false);
 
-  // Guards state updates after the component is gone (tab closed mid
-  // background-poll) — the poll loop itself is harmless to keep running,
-  // this just stops it from calling setState into the void.
   const mountedRef = useRef(true);
   useEffect(() => {
-    // The mount phase must also set this (not just rely on useRef(true)'s
-    // initial value) — React Strict Mode's dev-only mount→cleanup→remount
-    // cycle runs the cleanup below once before this component "really"
-    // starts, which would otherwise leave mountedRef stuck at false for
-    // the rest of its actual lifetime and silently no-op every adoptJob().
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
@@ -100,11 +89,6 @@ export default function HomeScreen({ initialJobId }: { initialJobId?: string } =
     }
   }
 
-  /** Resumes tracking a job whose background stage is already
-   *  QUEUED/RUNNING (page re-entry, or right after a fresh submit): shows
-   *  it immediately, marks the right "in flight" flag, and polls until it
-   *  settles. Polling here only drives this tab's UI — the job itself keeps
-   *  running on the server regardless of whether this promise ever resolves. */
   async function trackUntilSettled(kind: QueueKind, initial: Job) {
     adoptJob(initial);
     setKindLoading(kind, true);
@@ -116,9 +100,6 @@ export default function HomeScreen({ initialJobId }: { initialJobId?: string } =
     }
   }
 
-  // Page entry / re-entry: resume whatever job this browser was last
-  // looking at (explicit /job/[id] link, or the last one remembered in
-  // localStorage) instead of always starting from a blank slate.
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -140,7 +121,7 @@ export default function HomeScreen({ initialJobId }: { initialJobId?: string } =
         try {
           window.localStorage.removeItem(CURRENT_JOB_KEY);
         } catch {
-          // Ignore — worst case we just try to resume the same stale id again next visit.
+          // Ignore stale local storage cleanup failures.
         }
       }
       if (!cancelled) setHydrating(false);
@@ -156,9 +137,6 @@ export default function HomeScreen({ initialJobId }: { initialJobId?: string } =
     : null;
 
   async function handleGenerateTts() {
-    // Freeze one atomic config from current state right before sending —
-    // the request payload and the debug log below always agree with each
-    // other, and nothing downstream re-reads loose provider/voice state.
     const config = { provider: ttsProvider, voiceId: voice, voiceAlias: voiceLabel, text: ttsText };
     if (!config.voiceId) {
       setRequestError(config.provider === "elevenlabs" ? "ElevenLabs 목소리를 선택해 주세요." : "목소리를 선택해 주세요.");
@@ -187,6 +165,19 @@ export default function HomeScreen({ initialJobId }: { initialJobId?: string } =
       setRequestError((err as Error).message);
     } finally {
       setUploadLoading(false);
+    }
+  }
+
+  async function handleDeleteSource(sourceId: string) {
+    if (!job) return;
+    setRequestError(null);
+    try {
+      const updated = await deleteUploadedSource(job.job_id, sourceId);
+      adoptJob(updated);
+    } catch (err) {
+      if (err instanceof ApiRequestError && err.job) adoptJob(err.job);
+      setRequestError((err as Error).message);
+      throw err;
     }
   }
 
@@ -264,24 +255,18 @@ export default function HomeScreen({ initialJobId }: { initialJobId?: string } =
 
   function handleRetry() {
     if (!failedStage) return;
-    if (failedStage === "TTS") {
-      handleGenerateTts();
-    } else if (failedStage === "UPLOAD") {
-      handleUpload(selectedFiles);
-    } else if (failedStage === "RENDER") {
-      handleRender();
-    } else {
-      handleAnalyze();
-    }
+    if (failedStage === "TTS") handleGenerateTts();
+    else if (failedStage === "UPLOAD") handleUpload(selectedFiles);
+    else if (failedStage === "RENDER") handleRender();
+    else handleAnalyze();
   }
 
   const ttsDone = job?.stages.TTS.status === "SUCCESS";
   const coverDone = job?.stages.COVER.status === "SUCCESS";
   const uploadDone = job?.stages.UPLOAD.status === "SUCCESS";
-  const showAnalyzeButton = Boolean(ttsDone && uploadDone && coverDone && !coverDirty && !analyzing && job?.stages.VALIDATE.status !== "SUCCESS" && !failedStage);
-  const pipelineStarted =
-    analyzing ||
-    (job && ["OCR", "CLIP", "ALLOCATE", "VALIDATE", "RENDER"].some((s) => job.stages[s as StageName].status !== "PENDING"));
+  const hasSources = Boolean(job?.sources.length);
+  const showAnalyzeButton = Boolean(ttsDone && uploadDone && hasSources && coverDone && !coverDirty && !analyzing && job?.stages.VALIDATE.status !== "SUCCESS" && !failedStage);
+  const pipelineStarted = analyzing || (job && ["OCR", "CLIP", "ALLOCATE", "VALIDATE", "RENDER"].some((s) => job.stages[s as StageName].status !== "PENDING"));
   const showResult = job?.stages.VALIDATE.status === "SUCCESS";
   const backgroundActive = job?.queue?.status === "QUEUED" || job?.queue?.status === "RUNNING";
 
@@ -290,7 +275,7 @@ export default function HomeScreen({ initialJobId }: { initialJobId?: string } =
     try {
       window.localStorage.setItem(PUSH_PROMPT_SEEN_KEY, "1");
     } catch {
-      // Best effort — worst case the prompt reappears next visit.
+      // Best effort.
     }
   }
 
@@ -303,11 +288,7 @@ export default function HomeScreen({ initialJobId }: { initialJobId?: string } =
       </header>
 
       <div className="flex flex-1 flex-col gap-4 px-4 pt-4">
-        {hydrating && (
-          <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4 text-center text-sm text-[var(--text-muted)]">
-            이전 작업을 불러오는 중...
-          </div>
-        )}
+        {hydrating && <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4 text-center text-sm text-[var(--text-muted)]">이전 작업을 불러오는 중...</div>}
 
         {!hydrating && (
           <>
@@ -318,23 +299,19 @@ export default function HomeScreen({ initialJobId }: { initialJobId?: string } =
               onProviderChange={setTtsProvider}
               voice={voice}
               voiceLabel={voiceLabel}
-              onVoiceChange={(v, label) => {
-                setVoice(v);
-                setVoiceLabel(label);
-              }}
+              onVoiceChange={(v, label) => { setVoice(v); setVoiceLabel(label); }}
               loading={ttsLoading}
               job={job}
               onGenerate={handleGenerateTts}
             />
 
-            {ttsDone && (
-              <CoverStep job={job!} saving={coverSaving} onSave={handleCoverSave} onDirtyChange={setCoverDirty} />
-            )}
+            {ttsDone && <CoverStep job={job!} saving={coverSaving} onSave={handleCoverSave} onDirtyChange={setCoverDirty} />}
 
             <UploadStep
               job={job}
               loading={uploadLoading}
               onUpload={handleUpload}
+              onDeleteSource={handleDeleteSource}
               onAnalyze={handleAnalyze}
               canUpload={Boolean(ttsDone && coverDone && !coverDirty)}
               canAnalyze={showAnalyzeButton}
@@ -347,20 +324,11 @@ export default function HomeScreen({ initialJobId }: { initialJobId?: string } =
               ocrLocked={analyzing || Boolean(showResult)}
             />
 
-            {requestError && (
-              <div className="rounded-xl border border-[var(--danger)]/30 bg-[var(--danger-bg)] px-4 py-3 text-sm text-[var(--danger)]">
-                {requestError}
-              </div>
-            )}
-
+            {requestError && <div className="rounded-xl border border-[var(--danger)]/30 bg-[var(--danger-bg)] px-4 py-3 text-sm text-[var(--danger)]">{requestError}</div>}
             {backgroundActive && <BackgroundNotice />}
             {showPushPrompt && <PushPermissionPrompt onDismiss={dismissPushPrompt} />}
-
             {pipelineStarted && job && <ProgressView job={job} />}
-
-            {failedStage && job && (
-              <FailureView job={job} stage={failedStage} onRetry={handleRetry} retrying={ttsLoading || coverSaving || uploadLoading || analyzing || rendering} />
-            )}
+            {failedStage && job && <FailureView job={job} stage={failedStage} onRetry={handleRetry} retrying={ttsLoading || coverSaving || uploadLoading || analyzing || rendering} />}
 
             {showResult && job && (
               <>
