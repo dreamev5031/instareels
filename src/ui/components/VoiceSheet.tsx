@@ -64,7 +64,7 @@ export default function VoiceSheet({
         const result = await previewElevenLabsVoice(entry.id);
         src = result.previewUrl || (result.audioBase64 ? `data:${result.mimeType ?? "audio/mpeg"};base64,${result.audioBase64}` : undefined);
       }
-      if (!src) throw new Error("미리듣기를 생성하지 못했습니다.");
+      if (!src) throw new Error("미리듣기를 불러오지 못했습니다.");
       const audio = audioRef.current ?? (audioRef.current = new Audio());
       audio.pause();
       audio.currentTime = 0;
@@ -75,8 +75,8 @@ export default function VoiceSheet({
       audio.onended = () => setPlayingId(null);
       await audio.play();
       setPlayingId(entry.id);
-    } catch (caught) {
-      setActionError(caught instanceof Error ? caught.message : "미리듣기에 실패했습니다.");
+    } catch {
+      setActionError("미리듣기를 불러오지 못했습니다.");
     } finally {
       setPreviewLoadingId(null);
     }
@@ -97,7 +97,14 @@ export default function VoiceSheet({
     setRegistering(true);
     try {
       const entry = await registerElevenLabsVoice(voiceId, alias);
-      onVoicesChange([...voices, entry]);
+      const existingIndex = voices.findIndex((voice) => voice.voiceId === entry.voiceId || voice.id === entry.id);
+      if (existingIndex >= 0) {
+        const next = [...voices];
+        next[existingIndex] = entry;
+        onVoicesChange(next);
+      } else {
+        onVoicesChange([...voices, entry]);
+      }
       setVoiceIdInput("");
       setAliasInput("");
       setShowRegisterForm(false);
