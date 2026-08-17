@@ -52,10 +52,16 @@ function layoutTokens(layout: SubtitleTextLayout): Array<{ sourceIndex: number; 
   return output;
 }
 
+/**
+ * Keep the complete laid-out phrase in every ASS event while making glyphs
+ * outside [visibleStart, visibleEnd) transparent. This is the critical
+ * legacy behavior: libass always sees the final phrase geometry, so changing
+ * reveal states cannot recenter or stack glyphs on top of one another.
+ */
 function laidOutRange(layout: SubtitleTextLayout, visibleStart: number, visibleEnd: number, hiddenOutside = true): string {
   const tokens = layoutTokens(layout);
   let visible = !hiddenOutside;
-  let output = "";
+  let output = hiddenOutside ? "{\\alpha&HFF&}" : "";
   for (const token of tokens) {
     if (token.sourceIndex < 0) {
       output += token.text;
@@ -75,6 +81,11 @@ function laidOutFull(layout: SubtitleTextLayout): string {
   return laidOutRange(layout, 0, Number.POSITIVE_INFINITY, false);
 }
 
+/**
+ * Preserve the provider word timings already normalized by the TTS layer.
+ * Only the glyph reveal instants inside each provider word are interpolated;
+ * provider word boundaries are never replaced with a scene-duration split.
+ */
 function characterRevealTimes(segment: SubtitleSegment): number[] {
   const source = Array.from(segment.text);
   const times = new Array<number>(source.length).fill(Number.NaN);
@@ -117,20 +128,36 @@ function visibleCharacterIndices(layout: SubtitleTextLayout): number[] {
   return Array.from(layout.source).map((_, index) => index).filter((index) => !skipped.has(index));
 }
 
+function cursorOverlayText(layout: SubtitleTextLayout, sourceIndex: number, color: string): string {
+  let body = "{\\alpha&HFF&}";
+  for (const token of layoutTokens(layout)) {
+    if (token.sourceIndex < 0) {
+      body += token.text;
+      continue;
+    }
+    body += token.text;
+    if (token.sourceIndex === sourceIndex) {
+      body += `{\\alpha&H00&\\1c${color}}|{\\alpha&HFF&}`;
+    }
+  }
+  return body;
+}
+
 function typingEvents(segment: SubtitleSegment, settings: SubtitleSettings, y: number, withCursor: boolean): string[] {
   const layout = layoutSubtitleText(segment.text, settings.size);
   const times = characterRevealTimes(segment);
-  const indices = visibleCharacterIndices(layout).filter((index) => !/\s/u.test(Array.from(layout.source)[index] ?? ""));
+  const chars = Array.from(layout.source);
+  const indices = visibleCharacterIndices(layout).filter((index) => !/\s/u.test(chars[index] ?? ""));
   const events: string[] = [];
   if (!indices.length) return events;
   const phraseStart = Math.max(segment.start, times[indices[0]!] ?? segment.start);
+  const color = assColor(settings.color);
 
   indices.forEach((sourceIndex, revealIndex) => {
     const start = Math.max(segment.start, times[sourceIndex] ?? segment.start);
     const nextIndex = indices[revealIndex + 1];
     const end = nextIndex === undefined ? segment.end : Math.max(start + 0.01, times[nextIndex] ?? segment.end);
-    const prefixEnd = sourceIndex + 1;
-    const phraseText = override(settings, y) + laidOutRange(layout, 0, prefixEnd, true);
+    const phraseText = override(settings, y) + laidOutRange(layout, 0, sourceIndex + 1, true);
 
     if (!withCursor) {
       events.push(dialogue(start, end, `${segment.segment_id}_char_${revealIndex + 1}_text`, phraseText));
@@ -143,26 +170,22 @@ function typingEvents(segment: SubtitleSegment, settings: SubtitleSettings, y: n
       const phase = Math.floor((elapsed * 1000 + 0.001) / SUBTITLE_CURSOR_BLINK_MS);
       const boundary = phraseStart + ((phase + 1) * SUBTITLE_CURSOR_BLINK_MS) / 1000;
       const cursorEnd = Math.min(end, Math.max(cursorStart + 0.01, boundary));
-      events.push(dialogue(cursorStart, cursorEnd, `${segment.segment_id}_char_${revealIndex + 1}_${phase % 2 === 0 ? "text_on" : "cursor_off"}_${phase}`, phraseText, 0));
-      if (phase % 2 === 0) {
-        const cursorOverlay =
-          override(settings, y) +
-          laidOutRange(layout, Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY, true)
-            .replace("{\\alpha&HFF&}", "{\\alpha&HFF&}") +
-          "";
-        const tokens = layoutTokens(layout);
-        let body = "{\\alpha&HFF&}";
-        for (const token of tokens) {
-          if (token.sourceIndex < 0) {
-            body += token.text;
-            continue;
-          }
-          if (token.sourceIndex === prefixEnd) body += `{\\alpha&H00&\\1c${assColor(settings.color)}}|{\\alpha&HFF&}`;
-          body += token.text;
-        }
-        if (prefixEnd >= Array.from(layout.source).length) body += `{\\alpha&H00&\\1c${assColor(settings.color)}}|`;
-        events.push(dialogue(cursorStart, cursorEnd, `${segment.segment_id}_char_${revealIndex + 1}_cursor_on_${phase}`, override(settings, y) + body, 1));
-        void cursorOverlay;
+      const cursorVisible = phase % 2 === 0;
+      events.push(dialogue(
+        cursorStart,
+        cursorEnd,
+        `${segment.segment_id}_char_${revealIndex + 1}_${cursorVisible ? "text_on" : "cursor_off"}_${phase}`,
+        phraseText,
+        0,
+      ));
+      if (cursorVisible) {
+        events.push(dialogue(
+          cursorStart,
+          cursorEnd,
+          `${segment.segment_id}_char_${revealIndex + 1}_cursor_on_${phase}`,
+          override(settings, y) + cursorOverlayText(layout, sourceIndex, color),
+          1,
+        ));
       }
       cursorStart = cursorEnd;
     }
@@ -189,10 +212,22 @@ function characterEntryEvents(segment: SubtitleSegment, settings: SubtitleSettin
       const motionMs = SUBTITLE_EFFECT_TIMING.copybookMotionMs;
       const move = `\\move(${SUBTITLE_SAFE_AREA.centerX},${y + rise},${SUBTITLE_SAFE_AREA.centerX},${y},0,${motionMs})`;
       const extra = `\\alpha&HFF&\\blur2\\t(0,${motionMs},${SUBTITLE_EASE_OUT_CUBIC},\\alpha&H00&\\blur0)`;
-      events.push(dialogue(start, end, `${segment.segment_id}_char_${index + 1}_copybook`, override(settings, y, extra, move) + laidOutRange(layout, sourceIndex, sourceIndex + 1, true), 2));
+      events.push(dialogue(
+        start,
+        end,
+        `${segment.segment_id}_char_${index + 1}_copybook`,
+        override(settings, y, extra, move) + laidOutRange(layout, sourceIndex, sourceIndex + 1, true),
+        2,
+      ));
     } else {
       const extra = `\\fscx25\\fscy25\\alpha&HFF&\\t(0,${SUBTITLE_EFFECT_TIMING.flatPopPeakMs},${SUBTITLE_EASE_OUT_CUBIC},\\fscx116\\fscy116\\alpha&H00&)\\t(${SUBTITLE_EFFECT_TIMING.flatPopPeakMs},${SUBTITLE_EFFECT_TIMING.flatPopSettleMs},${SUBTITLE_EASE_OUT_CUBIC},\\fscx100\\fscy100)`;
-      events.push(dialogue(start, end, `${segment.segment_id}_char_${index + 1}_flat_popout`, override(settings, y, extra) + laidOutRange(layout, sourceIndex, sourceIndex + 1, true), 2));
+      events.push(dialogue(
+        start,
+        end,
+        `${segment.segment_id}_char_${index + 1}_flat_popout`,
+        override(settings, y, extra) + laidOutRange(layout, sourceIndex, sourceIndex + 1, true),
+        2,
+      ));
     }
   });
   return events;
@@ -203,9 +238,8 @@ function wordRanges(text: string): Array<{ start: number; end: number }> {
 }
 
 function insertRangeTags(layout: SubtitleTextLayout, start: number, end: number, openTags: string, closeTags: string): string {
-  const tokens = layoutTokens(layout);
   let output = "";
-  for (const token of tokens) {
+  for (const token of layoutTokens(layout)) {
     if (token.sourceIndex < 0) {
       output += token.text;
       continue;
@@ -226,7 +260,10 @@ function wordZoomEvents(segment: SubtitleSegment, settings: SubtitleSettings, y:
     const start = Math.max(segment.start, times[range.start] ?? segment.start);
     const next = ranges[index + 1];
     const end = next ? Math.max(start + 0.01, times[next.start] ?? segment.end) : segment.end;
-    const zoomMs = Math.min(SUBTITLE_EFFECT_TIMING.wordZoomMaxMs, Math.max(SUBTITLE_EFFECT_TIMING.wordZoomMinMs, Math.round((end - start) * 1000)));
+    const zoomMs = Math.min(
+      SUBTITLE_EFFECT_TIMING.wordZoomMaxMs,
+      Math.max(SUBTITLE_EFFECT_TIMING.wordZoomMinMs, Math.round((end - start) * 1000)),
+    );
     const mid = Math.max(80, Math.floor(zoomMs / 2));
     const tags = `\\fscx100\\fscy100\\t(0,${mid},${SUBTITLE_EASE_OUT_CUBIC},\\fscx${SUBTITLE_EFFECT_TIMING.wordZoomScalePercent}\\fscy${SUBTITLE_EFFECT_TIMING.wordZoomScalePercent})\\t(${mid},${zoomMs},${SUBTITLE_EASE_OUT_CUBIC},\\fscx100\\fscy100)`;
     const text = insertRangeTags(layout, range.start, range.end, tags, "\\fscx100\\fscy100");
@@ -254,7 +291,12 @@ function phraseEvent(segment: SubtitleSegment, settings: SubtitleSettings, y: nu
     position = `\\move(${SUBTITLE_SAFE_AREA.centerX + offset},${y},${SUBTITLE_SAFE_AREA.centerX},${y},0,${motion})`;
     extra = `\\alpha&HFF&\\t(0,${motion},${SUBTITLE_EASE_OUT_CUBIC},\\alpha&H00&)`;
   }
-  return [dialogue(segment.start, segment.end, `${segment.segment_id}_phrase_${mode}`, override(settings, y, extra, position) + laidOutFull(layout))];
+  return [dialogue(
+    segment.start,
+    segment.end,
+    `${segment.segment_id}_phrase_${mode}`,
+    override(settings, y, extra, position) + laidOutFull(layout),
+  )];
 }
 
 function pinkBlinkEvents(segment: SubtitleSegment, settings: SubtitleSettings, y: number): string[] {
@@ -268,7 +310,13 @@ function pinkBlinkEvents(segment: SubtitleSegment, settings: SubtitleSettings, y
     if (/\s/u.test(character)) return;
     const start = Math.max(segment.start, times[index] ?? segment.start);
     const next = index + 1 < chars.length ? times[index + 1] ?? segment.end : segment.end;
-    const end = Math.min(segment.end, Math.max(start + SUBTITLE_EFFECT_TIMING.pinkMinMs / 1000, Math.min(next, start + SUBTITLE_EFFECT_TIMING.pinkMaxMs / 1000)));
+    const end = Math.min(
+      segment.end,
+      Math.max(
+        start + SUBTITLE_EFFECT_TIMING.pinkMinMs / 1000,
+        Math.min(next, start + SUBTITLE_EFFECT_TIMING.pinkMaxMs / 1000),
+      ),
+    );
     const text = insertRangeTags(layout, index, index + 1, `\\1c${SUBTITLE_PINK_ASS}`, `\\1c${normal}`);
     events.push(dialogue(start, end, `${segment.segment_id}_char_${index + 1}_pink_blink`, override(settings, y) + text, 3));
   });
@@ -285,7 +333,12 @@ export function buildSubtitleAssEvents(segment: SubtitleSegment, settings: Subti
   return phraseEvent(segment, settings, y, mode);
 }
 
-export async function writeAssFile(file: string, segments: SubtitleSegment[], settings: SubtitleSettings, fontFamily = coverFontFamily(settings.font)): Promise<number> {
+export async function writeAssFile(
+  file: string,
+  segments: SubtitleSegment[],
+  settings: SubtitleSettings,
+  fontFamily = coverFontFamily(settings.font),
+): Promise<number> {
   const y = SUBTITLE_SAFE_AREA.y[settings.vertical_position];
   const events = segments.flatMap((segment) => buildSubtitleAssEvents(segment, settings, y));
   const header = `[Script Info]\nScriptType: v4.00+\nPlayResX: 1080\nPlayResY: 1920\nScaledBorderAndShadow: yes\nWrapStyle: 2\nKerning: yes\nYCbCr Matrix: TV.709\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Default,${fontFamily},${settings.size},${assColor(settings.color)},${assColor(settings.color)},&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,${settings.stroke_enabled ? 7 : 0},${settings.shadow_enabled ? 2 : 0},5,${SUBTITLE_SAFE_AREA.horizontalMargin},${SUBTITLE_SAFE_AREA.horizontalMargin},0,1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n`;
