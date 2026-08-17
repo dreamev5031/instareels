@@ -99,7 +99,7 @@ export class VoiceStorage {
     const existingIndex = voices.findIndex((entry) => entry.voiceId === input.voiceId);
 
     if (existingIndex >= 0) {
-      const existing = voices[existingIndex];
+      const existing = voices[existingIndex]!;
       const updated: ElevenLabsVoiceEntry = {
         ...existing,
         alias: input.alias,
@@ -135,7 +135,7 @@ export class VoiceStorage {
     const index = voices.findIndex((entry) => entry.id === id);
     if (index < 0) return undefined;
 
-    const existing = voices[index];
+    const existing = voices[index]!;
     const updated: ElevenLabsVoiceEntry = {
       ...existing,
       ...(input.providerName ? { providerName: input.providerName } : {}),
