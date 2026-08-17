@@ -9,7 +9,7 @@
     "start": "next start",
     "lint": "tsc --noEmit",
     "test": "tsx --test src/**/*.test.ts",
-    "test:source-cover": "tsx --test src/cover/style.test.ts",
+    "test:source-cover": "tsx --test src/cover/style.test.ts src/upload/sourceMutation.test.ts",
     "test:subtitle-presets": "tsx scripts/verify-subtitle-presets.ts"
   },
   "dependencies": {
