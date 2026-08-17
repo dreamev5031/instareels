@@ -6,6 +6,7 @@ on:
       - 'src/subtitle/**'
       - 'src/ui/components/SubtitleStep.tsx'
       - 'app/globals.css'
+      - 'app/api/diagnostics/subtitle-presets/**'
       - 'scripts/render-subtitle-preset-fixtures.ts'
       - '.github/workflows/subtitle-render-regression.yml'
   workflow_dispatch:
@@ -13,7 +14,7 @@ on:
 jobs:
   render-subtitle-presets:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -24,9 +25,45 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - run: npm run test:subtitle-ass
       - run: npx tsx scripts/render-subtitle-preset-fixtures.ts artifacts/subtitle-presets
+
+      - name: Wait for Railway API and run runtime render diagnostics
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/railway-subtitle-presets
+          url='https://instareels-api-production.up.railway.app/api/diagnostics/subtitle-presets'
+          ok=0
+          for attempt in $(seq 1 36); do
+            echo "Railway diagnostic attempt ${attempt}/36"
+            if curl -fsS --max-time 240 "$url" -o artifacts/railway-subtitle-presets/report.json; then
+              if jq -e '.ok == true and .preset_count == 9' artifacts/railway-subtitle-presets/report.json >/dev/null; then
+                ok=1
+                break
+              fi
+              cat artifacts/railway-subtitle-presets/report.json
+            fi
+            sleep 10
+          done
+          test "$ok" = 1
+          jq '.' artifacts/railway-subtitle-presets/report.json
+
+      - name: Download Railway rendered sample frames
+        shell: bash
+        run: |
+          set -euo pipefail
+          base='https://instareels-api-production.up.railway.app/api/diagnostics/subtitle-presets'
+          for effect in typewriter rushed_typing copybook flat_popout word_zoom breeze transparent_gradient pink_blink easy_slide; do
+            for t in 0.35 0.80 1.20; do
+              curl -fsS --max-time 60 "${base}?artifact=${effect}-${t}.jpg" \
+                -o "artifacts/railway-subtitle-presets/${effect}-${t}.jpg"
+            done
+          done
+
       - uses: actions/upload-artifact@v4
         with:
           name: subtitle-preset-renders
-          path: artifacts/subtitle-presets
+          path: |
+            artifacts/subtitle-presets
+            artifacts/railway-subtitle-presets
           if-no-files-found: error
           retention-days: 7
