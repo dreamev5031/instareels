@@ -8,7 +8,7 @@ export interface ElevenLabsVoiceEntry {
   provider: "elevenlabs";
   voiceId: string;
   alias: string;
-  providerName: string;
+  providerName?: string;
   previewUrl?: string;
   labels?: Record<string, string>;
   createdAt: string;
@@ -91,23 +91,61 @@ export class VoiceStorage {
   async addVoice(input: {
     voiceId: string;
     alias: string;
-    providerName: string;
+    providerName?: string;
     previewUrl?: string;
     labels?: Record<string, string>;
   }): Promise<ElevenLabsVoiceEntry> {
     const voices = await this.listVoices();
+    const existingIndex = voices.findIndex((entry) => entry.voiceId === input.voiceId);
+
+    if (existingIndex >= 0) {
+      const existing = voices[existingIndex];
+      const updated: ElevenLabsVoiceEntry = {
+        ...existing,
+        alias: input.alias,
+        ...(input.providerName ? { providerName: input.providerName } : {}),
+        ...(input.previewUrl ? { previewUrl: input.previewUrl } : {}),
+        ...(input.labels ? { labels: input.labels } : {}),
+      };
+      const next = [...voices];
+      next[existingIndex] = updated;
+      await this.saveVoices(next);
+      return updated;
+    }
+
     const entry: ElevenLabsVoiceEntry = {
       id: randomUUID(),
       provider: "elevenlabs",
       voiceId: input.voiceId,
       alias: input.alias,
-      providerName: input.providerName,
+      ...(input.providerName ? { providerName: input.providerName } : {}),
       ...(input.previewUrl ? { previewUrl: input.previewUrl } : {}),
       ...(input.labels ? { labels: input.labels } : {}),
       createdAt: new Date().toISOString(),
     };
     await this.saveVoices([...voices, entry]);
     return entry;
+  }
+
+  async cacheProviderMetadata(
+    id: string,
+    input: { providerName?: string; previewUrl?: string; labels?: Record<string, string> },
+  ): Promise<ElevenLabsVoiceEntry | undefined> {
+    const voices = await this.listVoices();
+    const index = voices.findIndex((entry) => entry.id === id);
+    if (index < 0) return undefined;
+
+    const existing = voices[index];
+    const updated: ElevenLabsVoiceEntry = {
+      ...existing,
+      ...(input.providerName ? { providerName: input.providerName } : {}),
+      ...(input.previewUrl ? { previewUrl: input.previewUrl } : {}),
+      ...(input.labels ? { labels: input.labels } : {}),
+    };
+    const next = [...voices];
+    next[index] = updated;
+    await this.saveVoices(next);
+    return updated;
   }
 
   async removeVoice(id: string): Promise<boolean> {
