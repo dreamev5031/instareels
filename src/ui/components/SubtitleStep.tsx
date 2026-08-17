@@ -4,7 +4,6 @@ import { useEffect, useMemo, useState } from "react";
 import { COVER_FONTS, coverFontFamily } from "@/cover/fonts";
 import type { CoverFontKey, Job, SubtitleEffect, SubtitleSettings, SubtitleVerticalPosition } from "@/shared/types";
 import {
-  SUBTITLE_ANIMATION_MS,
   SUBTITLE_EFFECT_SPECS,
   SUBTITLE_EFFECT_SPEC_BY_ID,
   SUBTITLE_LINE_HEIGHT,
@@ -21,6 +20,35 @@ function FontSheet({ selected, onSelect, onClose }: { selected: CoverFontKey; on
       <div className="max-h-[65dvh] overflow-y-auto p-2">{COVER_FONTS.map((font) => <button type="button" key={font.key} data-testid={`subtitle-font-${font.key}`} onClick={() => { onSelect(font.key); onClose(); }} className={`flex w-full items-center justify-between rounded-xl px-3 py-3 text-left text-[15px] ${selected === font.key ? "bg-indigo-50 text-[var(--primary)]" : "hover:bg-slate-50"}`} style={{ fontFamily: font.family }}><span>{font.label}</span>{selected === font.key && <span>✓</span>}</button>)}</div>
     </section>
   </div>;
+}
+
+function PreviewEffectText({ text, effect }: { text: string; effect: SubtitleEffect }) {
+  const spec = SUBTITLE_EFFECT_SPEC_BY_ID[effect];
+  if (spec.animationUnit === "word") {
+    let wordIndex = 0;
+    return <>{text.split(/(\s+)/u).map((piece, index) => {
+      if (!piece || /^\s+$/u.test(piece)) return <span key={`space-${index}`}>{piece}</span>;
+      const current = wordIndex++;
+      return <span key={`word-${index}`} className="subtitle-preview-word" style={{ "--word-delay": `${current * 0.42}s` } as React.CSSProperties}>{piece}</span>;
+    })}</>;
+  }
+  if (spec.animationUnit === "phrase") return <span className="subtitle-preview-line">{text}</span>;
+  let visibleIndex = 0;
+  return <>
+    {Array.from(text).map((character, index) => {
+      const currentVisible = character.trim() ? visibleIndex : Math.max(0, visibleIndex - 1);
+      if (character.trim()) visibleIndex += 1;
+      return <span
+        key={`glyph-${index}`}
+        className="subtitle-preview-glyph"
+        style={{
+          "--glyph-delay": `${currentVisible * 0.075}s`,
+          "--glyph-delay-fast": `${currentVisible * 0.045}s`,
+        } as React.CSSProperties}
+      >{character}</span>;
+    })}
+    {effect === "typewriter" && <span className="subtitle-cursor" aria-hidden="true">|</span>}
+  </>;
 }
 
 export default function SubtitleStep({ job, saving, onSave, onDirtyChange }: { job: Job; saving: boolean; onSave: (settings: SubtitleSettings) => Promise<void>; onDirtyChange: (dirty: boolean) => void }) {
@@ -46,7 +74,7 @@ export default function SubtitleStep({ job, saving, onSave, onDirtyChange }: { j
 
     <div className="mt-3 flex justify-center rounded-2xl bg-slate-950 p-3">
       <div className="relative aspect-[9/16] w-[min(52vw,190px)] overflow-hidden rounded-xl bg-gradient-to-br from-slate-700 via-slate-900 to-black" data-testid="subtitle-preview">
-        {settings.enabled && <div key={`${settings.effect}-${replay}`} className={`subtitle-preview-effect ${effectSpec.previewClass} absolute inset-x-[6%] -translate-y-1/2 whitespace-pre-line break-words text-center font-black`} style={{ top: `${subtitleYPercent(settings.vertical_position)}%`, fontFamily: coverFontFamily(settings.font), fontSize: `${Math.max(10, 18.3 * scale)}px`, lineHeight: SUBTITLE_LINE_HEIGHT, color: settings.color, WebkitTextStroke: settings.stroke_enabled ? "1.2px #000" : "0 transparent", textShadow: settings.shadow_enabled ? "0 0.5px 1px rgba(0,0,0,.9)" : "none", animationDuration: `${SUBTITLE_ANIMATION_MS}ms` }}>{previewText}{settings.effect === "typewriter" && <span className="subtitle-cursor">|</span>}</div>}
+        {settings.enabled && <div key={`${settings.effect}-${replay}`} className={`subtitle-preview-effect ${effectSpec.previewClass} absolute inset-x-[6%] -translate-y-1/2 whitespace-pre-line break-words text-center font-black`} style={{ top: `${subtitleYPercent(settings.vertical_position)}%`, fontFamily: coverFontFamily(settings.font), fontSize: `${Math.max(10, 18.3 * scale)}px`, lineHeight: SUBTITLE_LINE_HEIGHT, color: settings.color, WebkitTextStroke: settings.stroke_enabled ? "1.2px #000" : "0 transparent", textShadow: settings.shadow_enabled ? "0 0.5px 1px rgba(0,0,0,.9)" : "none" }}><PreviewEffectText text={previewText} effect={settings.effect} /></div>}
       </div>
     </div>
 
@@ -68,4 +96,3 @@ export default function SubtitleStep({ job, saving, onSave, onDirtyChange }: { j
     {fontOpen && <FontSheet selected={settings.font} onSelect={(font) => update("font", font)} onClose={() => setFontOpen(false)} />}
   </section>;
 }
-
