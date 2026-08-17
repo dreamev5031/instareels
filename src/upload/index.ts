@@ -61,9 +61,42 @@ export interface UploadStageDependencies {
 
 const DEFAULT_DEPENDENCIES: UploadStageDependencies = { probeMedia, extractThumbnail };
 
-function nextSourceId(job: Job): string {
-  const n = job.sources.length + 1;
-  return `SOURCE_${String(n).padStart(3, "0")}`;
+export function nextSourceId(job: Job): string {
+  const max = job.sources.reduce((highest, source) => {
+    const match = source.source_id.match(/^SOURCE_(\d+)$/);
+    if (!match) return highest;
+    return Math.max(highest, Number.parseInt(match[1]!, 10));
+  }, 0);
+  return `SOURCE_${String(max + 1).padStart(3, "0")}`;
+}
+
+export function hasVideoAnalysisResults(job: Job): boolean {
+  return Boolean(
+    job.video_sources_changed ||
+    Object.keys(job.ocr).length ||
+    job.clips.length ||
+    job.scenes.length ||
+    job.allocation_decisions?.length ||
+    job.validation ||
+    job.render ||
+    ["OCR", "CLIP", "ALLOCATE", "VALIDATE", "RENDER"].some(
+      (stage) => job.stages[stage as keyof typeof job.stages].status !== "PENDING",
+    )
+  );
+}
+
+/** Clears every result derived from the current source set without touching
+ * TTS, cover, subtitle settings, BGM, or the source files themselves. */
+export function invalidateVideoComposition(job: Job, markChanged = true): void {
+  for (const source of job.sources) source.status = "PENDING";
+  job.ocr = {};
+  job.clips = [];
+  job.scenes = [];
+  job.allocation_decisions = undefined;
+  job.validation = undefined;
+  job.render = undefined;
+  resetDownstreamStages(job, "OCR");
+  if (markChanged) job.video_sources_changed = true;
 }
 
 export async function runUploadStage(
@@ -73,6 +106,7 @@ export async function runUploadStage(
 ): Promise<void> {
   assertTtsReady(job, "UPLOAD");
   const dependencies = { ...DEFAULT_DEPENDENCIES, ...dependencyOverrides };
+  const shouldMarkChanged = hasVideoAnalysisResults(job);
   resetDownstreamStages(job, "UPLOAD");
   startStage(job, "UPLOAD");
 
@@ -109,6 +143,7 @@ export async function runUploadStage(
   await fs.mkdir(thumbsDir, { recursive: true });
 
   try {
+    let compositionInvalidated = false;
     for (const f of files) {
       const ext = path.extname(f.originalFilename).toLowerCase() || ".mp4";
       if (!SUPPORTED_EXTENSIONS.has(ext)) {
@@ -157,6 +192,10 @@ export async function runUploadStage(
         thumbnail: thumbPath,
       };
       job.sources.push(source);
+      if (!compositionInvalidated) {
+        invalidateVideoComposition(job, shouldMarkChanged);
+        compositionInvalidated = true;
+      }
       addLog(job, "UPLOAD", "info", `${sourceId} 업로드 완료 (${probe.duration.toFixed(1)}초)`, {
         source_id: sourceId,
         original_filename: f.originalFilename,
