@@ -1,6 +1,10 @@
+import fs from "node:fs/promises";
 import { NextResponse } from "next/server";
-import { failStage, jobExists, loadJob, saveJob } from "@/jobs/store";
+import { addLog, failStage, jobExists, loadJob, saveJob } from "@/jobs/store";
+import { jobFramesDir, jobRenderDir } from "@/jobs/paths";
 import {
+  hasVideoAnalysisResults,
+  invalidateVideoComposition,
   MAX_UPLOAD_REQUEST_BYTES,
   runUploadStage,
   validateUploadSizes,
@@ -146,5 +150,51 @@ export async function POST(req: Request) {
   }
   saveJob(job);
 
+  return NextResponse.json({ job });
+}
+
+export async function DELETE(req: Request) {
+  const url = new URL(req.url);
+  const jobId = url.searchParams.get("jobId")?.trim();
+  const sourceId = url.searchParams.get("sourceId")?.trim();
+  if (!jobId || !sourceId || !jobExists(jobId)) {
+    return NextResponse.json(
+      { error: "SOURCE_NOT_FOUND", error_code: "SOURCE_NOT_FOUND", message: "삭제할 영상을 찾지 못했습니다." },
+      { status: 404 },
+    );
+  }
+
+  const job = loadJob(jobId);
+  if (job.queue?.status === "QUEUED" || job.queue?.status === "RUNNING") {
+    return NextResponse.json(
+      { error: "JOB_BUSY", error_code: "JOB_BUSY", message: "진행 중인 작업이 끝난 뒤 영상을 변경해 주세요.", job },
+      { status: 409 },
+    );
+  }
+  const source = job.sources.find((candidate) => candidate.source_id === sourceId);
+  if (!source) {
+    return NextResponse.json(
+      { error: "SOURCE_NOT_FOUND", error_code: "SOURCE_NOT_FOUND", message: "삭제할 영상을 찾지 못했습니다.", job },
+      { status: 404 },
+    );
+  }
+
+  const hadAnalysis = hasVideoAnalysisResults(job);
+  await Promise.all([
+    fs.rm(source.file, { force: true }).catch(() => undefined),
+    source.thumbnail ? fs.rm(source.thumbnail, { force: true }).catch(() => undefined) : Promise.resolve(),
+    fs.rm(jobFramesDir(jobId, sourceId), { recursive: true, force: true }).catch(() => undefined),
+    fs.rm(jobRenderDir(jobId), { recursive: true, force: true }).catch(() => undefined),
+  ]);
+
+  job.sources = job.sources.filter((candidate) => candidate.source_id !== sourceId);
+  invalidateVideoComposition(job, hadAnalysis);
+  if (job.sources.length === 0) job.stages.UPLOAD = { status: "PENDING" };
+  addLog(job, "UPLOAD", "info", `${sourceId} 삭제 — 영상 구성 변경으로 분석 결과 무효화`, {
+    source_id: sourceId,
+    remaining_source_count: job.sources.length,
+    analysis_invalidated: hadAnalysis,
+  });
+  saveJob(job);
   return NextResponse.json({ job });
 }
