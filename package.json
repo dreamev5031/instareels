@@ -4,12 +4,14 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "prebuild": "npm run test:source-cover",
+    "prebuild": "npm run test:build-regression",
     "build": "next build",
     "start": "next start",
     "lint": "tsc --noEmit",
     "test": "tsx --test src/**/*.test.ts",
     "test:source-cover": "tsx --test src/cover/style.test.ts src/upload/sourceMutation.test.ts",
+    "test:subtitle-ass": "tsx --test src/subtitle/ass.test.ts",
+    "test:build-regression": "npm run test:source-cover && npm run test:subtitle-ass",
     "test:subtitle-presets": "tsx scripts/verify-subtitle-presets.ts"
   },
   "dependencies": {
