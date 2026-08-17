@@ -40,3 +40,24 @@ export function coverVerticalCenterPercent(position: keyof typeof COVER_TEXT_STY
 export function coverPreviewCqw(px: number): string {
   return `${(px / COVER_CANVAS_WIDTH) * 100}cqw`;
 }
+
+export function wrapCoverText(text: string, maxCharacters: number): string[] {
+  const paragraphs = text.trim() ? text.trim().split(/\r?\n/) : [];
+  const lines: string[] = [];
+  for (const paragraph of paragraphs) {
+    let current = "";
+    for (const word of paragraph.split(/\s+/)) {
+      const candidate = current ? `${current} ${word}` : word;
+      if (Array.from(candidate).length <= maxCharacters) {
+        current = candidate;
+        continue;
+      }
+      if (current) lines.push(current);
+      const characters = Array.from(word);
+      while (characters.length > maxCharacters) lines.push(characters.splice(0, maxCharacters).join(""));
+      current = characters.join("");
+    }
+    if (current) lines.push(current);
+  }
+  return lines;
+}
