@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import { Job } from "@/shared/types";
 import { API_BASE_URL } from "@/ui/api";
 
@@ -8,6 +8,7 @@ interface Props {
   job: Job | null;
   loading: boolean;
   onUpload: (files: File[]) => void;
+  onDeleteSource: (sourceId: string) => Promise<void>;
   onAnalyze: () => void;
   canUpload: boolean;
   canAnalyze: boolean;
@@ -24,6 +25,7 @@ export default function UploadStep({
   job,
   loading,
   onUpload,
+  onDeleteSource,
   onAnalyze,
   canUpload,
   canAnalyze,
@@ -36,6 +38,7 @@ export default function UploadStep({
   ocrLocked,
 }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const [deletingSourceId, setDeletingSourceId] = useState<string | null>(null);
   const sources = job?.sources ?? [];
   const ocrStage = job?.stages.OCR;
   const blockedCount = Object.values(job?.ocr ?? {}).flat().filter((segment) => !segment.ocr_safe).length;
@@ -44,6 +47,16 @@ export default function UploadStep({
     const files = Array.from(event.target.files ?? []);
     if (files.length > 0) onUpload(files);
     event.target.value = "";
+  }
+
+  async function handleDelete(sourceId: string) {
+    if (deletingSourceId || analyzing || loading) return;
+    setDeletingSourceId(sourceId);
+    try {
+      await onDeleteSource(sourceId);
+    } finally {
+      setDeletingSourceId(null);
+    }
   }
 
   const disabledReason = !ttsReady
@@ -89,7 +102,7 @@ export default function UploadStep({
         type="button"
         className="w-full rounded-xl border border-dashed border-[var(--primary)]/50 bg-[var(--primary)]/5 py-3 text-sm font-semibold text-[var(--primary)] transition active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40"
         onClick={() => inputRef.current?.click()}
-        disabled={loading || !canUpload}
+        disabled={loading || analyzing || !canUpload}
       >
         {loading ? "업로드 중..." : "+ 영상 선택"}
       </button>
@@ -97,7 +110,7 @@ export default function UploadStep({
       {sources.length > 0 && job && (
         <div className="mt-3 flex gap-2.5 overflow-x-auto pb-1" data-testid="video-thumbnails">
           {sources.map((source) => (
-            <div key={source.source_id} className="w-28 shrink-0 overflow-hidden rounded-xl border border-[var(--border)] bg-white">
+            <div key={source.source_id} className="relative w-28 shrink-0 overflow-hidden rounded-xl border border-[var(--border)] bg-white">
               <div className="h-16 w-full bg-gray-100">
                 <img
                   src={`${API_BASE_URL}/api/media/${job.job_id}/thumb/${source.source_id}`}
@@ -105,6 +118,16 @@ export default function UploadStep({
                   className="h-full w-full object-cover"
                 />
               </div>
+              <button
+                type="button"
+                aria-label={`${source.source_id} 삭제`}
+                data-testid={`delete-source-${source.source_id}`}
+                disabled={Boolean(deletingSourceId) || analyzing || loading}
+                onClick={() => void handleDelete(source.source_id)}
+                className="absolute right-1.5 top-1.5 flex h-8 w-8 items-center justify-center rounded-full bg-black/65 text-lg font-medium leading-none text-white shadow-sm backdrop-blur-sm transition active:scale-90 disabled:opacity-40"
+              >
+                {deletingSourceId === source.source_id ? "…" : "×"}
+              </button>
               <div className="px-2 py-1.5">
                 <p className="truncate text-[11px] font-semibold">{source.source_id}</p>
                 <p className="text-[11px] text-[var(--text-muted)]">{source.duration.toFixed(1)}초</p>
@@ -113,6 +136,12 @@ export default function UploadStep({
             </div>
           ))}
         </div>
+      )}
+
+      {job?.video_sources_changed && (
+        <p data-testid="video-changed-notice" className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-center text-xs font-medium text-amber-700">
+          영상이 변경되어 다시 분석이 필요합니다.
+        </p>
       )}
 
       <div className="mt-3 rounded-xl bg-slate-50 px-3 py-3" data-testid="ocr-setting">
