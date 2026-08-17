@@ -16,9 +16,19 @@ import { prepareRenderFont, readRenderFontFamily } from "./fonts";
 import { writeAssFile } from "@/subtitle/ass";
 import { layoutSubtitleText, SUBTITLE_EFFECT_SPEC_BY_ID } from "@/subtitle/spec";
 import { bgmStorage } from "@/bgm/storage";
+import {
+  COVER_CANVAS_HEIGHT,
+  COVER_CANVAS_WIDTH,
+  COVER_TEXT_STYLE,
+  coverMainLineHeight,
+  coverSubLineHeight,
+  coverTextGap,
+  coverVerticalCenterPercent,
+  wrapCoverText,
+} from "@/cover/style";
 
-const OUTPUT_WIDTH = 1080;
-const OUTPUT_HEIGHT = 1920;
+const OUTPUT_WIDTH = COVER_CANVAS_WIDTH;
+const OUTPUT_HEIGHT = COVER_CANVAS_HEIGHT;
 const OUTPUT_FPS = 30;
 const COVER_DURATION = 0.1;
 const DURATION_TOLERANCE = 0.18;
@@ -169,27 +179,6 @@ function failSubstage(job: Job, error: RenderStepError) {
   return jobError;
 }
 
-function wrapText(text: string, maxCharacters: number): string[] {
-  const paragraphs = text.trim() ? text.trim().split(/\r?\n/) : [];
-  const lines: string[] = [];
-  for (const paragraph of paragraphs) {
-    let current = "";
-    for (const word of paragraph.split(/\s+/)) {
-      const candidate = current ? `${current} ${word}` : word;
-      if (Array.from(candidate).length <= maxCharacters) {
-        current = candidate;
-        continue;
-      }
-      if (current) lines.push(current);
-      const characters = Array.from(word);
-      while (characters.length > maxCharacters) lines.push(characters.splice(0, maxCharacters).join(""));
-      current = characters.join("");
-    }
-    if (current) lines.push(current);
-  }
-  return lines;
-}
-
 function escapeFilterPath(filePath: string): string {
   return filePath.replace(/\\/g, "/").replace(/:/g, "\\:").replace(/'/g, "\\'");
 }
@@ -200,26 +189,30 @@ async function addTextFilters(
   mainFont: string,
   subFont: string,
 ): Promise<string[]> {
-  const mainLines = wrapText(job.cover.main_text, 11);
-  const subLines = wrapText(job.cover.sub_text, 18);
-  const mainLineHeight = 116;
-  const subLineHeight = 72;
-  const gap = mainLines.length && subLines.length ? 36 : 0;
+  const mainLines = wrapCoverText(job.cover.main_text, COVER_TEXT_STYLE.mainMaxCharacters);
+  const subLines = wrapCoverText(job.cover.sub_text, COVER_TEXT_STYLE.subMaxCharacters);
+  const mainLineHeight = coverMainLineHeight();
+  const subLineHeight = coverSubLineHeight();
+  const gap = mainLines.length && subLines.length ? coverTextGap() : 0;
   const blockHeight = mainLines.length * mainLineHeight + gap + subLines.length * subLineHeight;
-  const blockTop = job.cover.vertical_position === "top"
-    ? 230
-    : job.cover.vertical_position === "bottom"
-      ? OUTPUT_HEIGHT - 230 - blockHeight
-      : (OUTPUT_HEIGHT - blockHeight) / 2;
+  const centerY = OUTPUT_HEIGHT * coverVerticalCenterPercent(job.cover.vertical_position) / 100;
+  const blockTop = Math.max(
+    COVER_TEXT_STYLE.safeMarginY,
+    Math.min(OUTPUT_HEIGHT - blockHeight - COVER_TEXT_STYLE.safeMarginY, centerY - blockHeight / 2),
+  );
   const color = `0x${job.cover.text_color.slice(1)}`;
-  const style = [
-    job.cover.shadow_enabled ? "shadowcolor=black@0.75:shadowx=5:shadowy=7" : "",
-    job.cover.stroke_enabled ? "borderw=5:bordercolor=black@0.9" : "",
-  ].filter(Boolean).join(":");
   const filters: string[] = [];
-  let y = Math.max(80, blockTop);
+  let y = blockTop;
 
   async function append(lines: string[], fontPath: string, fontSize: number, lineHeight: number, prefix: string) {
+    const style = [
+      job.cover.shadow_enabled
+        ? `shadowcolor=black@0.75:shadowx=0:shadowy=${Math.max(3, Math.round(fontSize * 0.035))}`
+        : "",
+      job.cover.stroke_enabled
+        ? `borderw=${Math.max(3, Math.round(fontSize * 0.055))}:bordercolor=black@0.9`
+        : "",
+    ].filter(Boolean).join(":");
     for (let index = 0; index < lines.length; index += 1) {
       const textFile = path.join(renderDir, `${prefix}-${index + 1}.txt`);
       await fs.writeFile(textFile, lines[index]!, "utf8");
@@ -232,9 +225,9 @@ async function addTextFilters(
     }
   }
 
-  await append(mainLines, mainFont, 92, mainLineHeight, "cover-main");
+  await append(mainLines, mainFont, COVER_TEXT_STYLE.mainFontSize, mainLineHeight, "cover-main");
   y += gap;
-  await append(subLines, subFont, 54, subLineHeight, "cover-sub");
+  await append(subLines, subFont, COVER_TEXT_STYLE.subFontSize, subLineHeight, "cover-sub");
   return filters;
 }
 
@@ -307,45 +300,23 @@ async function renderVideoAssembly(job: Job, onProgress?: RenderProgressCallback
   let muxArgs: string[];
   if (job.bgm.bgmEnabled) {
     if (!job.bgm.bgmId) {
-      throw new RenderStepError("VIDEO_ASSEMBLY", "VIDEO_ASSEMBLY_FAILED", "선택한 BGM 정보가 없습니다.", {
-        bgm_enabled: true,
-      });
+      throw new RenderStepError("VIDEO_ASSEMBLY", "VIDEO_ASSEMBLY_FAILED", "선택한 BGM 정보가 없습니다.", { bgm_enabled: true });
     }
     const bgmFile = path.join(renderDir, "bgm.mp3");
     try {
-      if (!await bgmStorage.downloadTrack(job.bgm.bgmId, bgmFile)) {
-        throw new Error("BGM_NOT_FOUND");
-      }
+      if (!await bgmStorage.downloadTrack(job.bgm.bgmId, bgmFile)) throw new Error("BGM_NOT_FOUND");
     } catch (caught) {
       throw new RenderStepError("VIDEO_ASSEMBLY", "VIDEO_ASSEMBLY_FAILED", "선택한 BGM을 Bucket에서 내려받지 못했습니다.", {
-        bgm_id: job.bgm.bgmId,
-        bgm_name: job.bgm.bgmName,
-        stderr: stderrTail(caught),
+        bgm_id: job.bgm.bgmId, bgm_name: job.bgm.bgmName, stderr: stderrTail(caught),
       });
     }
     const bgmVolume = Math.min(1, Math.max(0, job.bgm.bgmVolume));
-    muxArgs = buildAudioMuxArgs({
-      videoOnly,
-      ttsPath: job.tts!.audio_path,
-      ttsDuration: job.tts!.duration,
-      assembled,
-      bgmFile,
-      bgmVolume,
-    });
+    muxArgs = buildAudioMuxArgs({ videoOnly, ttsPath: job.tts!.audio_path, ttsDuration: job.tts!.duration, assembled, bgmFile, bgmVolume });
     addLog(job, "RENDER", "info", "TTS와 BGM 오디오 mix 준비", {
-      substage: "VIDEO_ASSEMBLY",
-      tts_volume: 1,
-      bgm_id: job.bgm.bgmId,
-      bgm_name: job.bgm.bgmName,
-      bgm_volume: bgmVolume,
+      substage: "VIDEO_ASSEMBLY", tts_volume: 1, bgm_id: job.bgm.bgmId, bgm_name: job.bgm.bgmName, bgm_volume: bgmVolume,
     });
   } else {
-    muxArgs = buildAudioMuxArgs({
-      videoOnly,
-      ttsPath: job.tts!.audio_path,
-      ttsDuration: job.tts!.duration,
-      assembled,
-    });
+    muxArgs = buildAudioMuxArgs({ videoOnly, ttsPath: job.tts!.audio_path, ttsDuration: job.tts!.duration, assembled });
   }
   try {
     await runFfmpeg(muxArgs);
@@ -369,9 +340,7 @@ async function renderCover(job: Job, onProgress?: RenderProgressCallback) {
   let subFont: string;
   try {
     mainFont = await prepareRenderFont(job.cover.main_font, fontsDir);
-    subFont = job.cover.use_same_font
-      ? mainFont
-      : await prepareRenderFont(job.cover.sub_font, fontsDir);
+    subFont = job.cover.use_same_font ? mainFont : await prepareRenderFont(job.cover.sub_font, fontsDir);
   } catch (caught) {
     throw new RenderStepError("COVER_RENDER", "FONT_PREPARE_FAILED", "선택한 앞표지 폰트를 준비하지 못했습니다.", {
       main_font: job.cover.main_font, sub_font: job.cover.sub_font, stderr: stderrTail(caught),
@@ -399,8 +368,7 @@ async function renderCover(job: Job, onProgress?: RenderProgressCallback) {
   } catch (caught) {
     throw new RenderStepError("COVER_RENDER", "COVER_RENDER_FAILED", "앞표지 0.1초 클립 생성에 실패했습니다.", {
       file_path: job.cover.image!.file, ffmpeg_command_summary: commandSummary(args), stderr: stderrTail(caught),
-      main_font: job.cover.main_font, sub_font: job.cover.sub_font,
-      vertical_position: job.cover.vertical_position,
+      main_font: job.cover.main_font, sub_font: job.cover.sub_font, vertical_position: job.cover.vertical_position,
     });
   }
   job.render!.cover_file = coverFile;
@@ -418,8 +386,7 @@ async function generateAndBurnSubtitles(job: Job, onProgress?: RenderProgressCal
   }
   if (job.subtitle.status !== "SUCCESS" || job.subtitle.segments.length === 0) {
     throw new RenderStepError("SUBTITLE_GENERATION", "SUBTITLE_TIMING_FAILED", "확정된 자막 segment가 없습니다. 자막 설정을 먼저 저장해 주세요.", {
-      subtitle_status: job.subtitle.status,
-      segment_count: job.subtitle.segments.length,
+      subtitle_status: job.subtitle.status, segment_count: job.subtitle.segments.length,
     });
   }
 
@@ -432,9 +399,7 @@ async function generateAndBurnSubtitles(job: Job, onProgress?: RenderProgressCal
     subtitleFontFamily = await readRenderFontFamily(subtitleFontFile);
   } catch (caught) {
     throw new RenderStepError("SUBTITLE_GENERATION", "SUBTITLE_FONT_NOT_FOUND", "선택한 자막 폰트를 준비하지 못했습니다.", {
-      font: job.subtitle.settings.font,
-      file_path: fontsDir,
-      stderr: stderrTail(caught),
+      font: job.subtitle.settings.font, file_path: fontsDir, stderr: stderrTail(caught),
     });
   }
   const assFile = path.join(renderDir, "subtitles.ass");
@@ -444,10 +409,7 @@ async function generateAndBurnSubtitles(job: Job, onProgress?: RenderProgressCal
     if (eventCount <= 0) throw new Error("ASS Dialogue event가 0개입니다.");
   } catch (caught) {
     throw new RenderStepError("SUBTITLE_GENERATION", "SUBTITLE_ASS_GENERATION_FAILED", "ASS 자막 생성에 실패했습니다.", {
-      file_path: assFile,
-      segment_count: job.subtitle.segments.length,
-      effect: job.subtitle.settings.effect,
-      stderr: stderrTail(caught),
+      file_path: assFile, segment_count: job.subtitle.segments.length, effect: job.subtitle.settings.effect, stderr: stderrTail(caught),
     });
   }
   Object.assign(job.subtitle, { ass_file: assFile, event_count: eventCount });
@@ -479,11 +441,8 @@ async function generateAndBurnSubtitles(job: Job, onProgress?: RenderProgressCal
     await runFfmpeg(args);
   } catch (caught) {
     throw new RenderStepError("SUBTITLE_BURN", "SUBTITLE_BURN_FAILED", "FFmpeg/libass 자막 burn-in에 실패했습니다.", {
-      font: job.subtitle.settings.font,
-      ass_file: assFile,
-      file_path: burnedFile,
-      ffmpeg_command_summary: commandSummary(args),
-      stderr: stderrTail(caught),
+      font: job.subtitle.settings.font, ass_file: assFile, file_path: burnedFile,
+      ffmpeg_command_summary: commandSummary(args), stderr: stderrTail(caught),
     });
   }
 
@@ -493,8 +452,7 @@ async function generateAndBurnSubtitles(job: Job, onProgress?: RenderProgressCal
     const { stderr } = await runFfmpeg([
       "-v", "info", "-ss", String(sampleTime), "-i", job.render!.assembled_file!,
       "-ss", String(sampleTime), "-i", burnedFile,
-      "-filter_complex", "[0:v][1:v]ssim",
-      "-frames:v", "1", "-f", "null", "-",
+      "-filter_complex", "[0:v][1:v]ssim", "-frames:v", "1", "-f", "null", "-",
     ]);
     const match = stderr.match(/All:([0-9.]+)/);
     similarity = match ? Number.parseFloat(match[1]!) : 1;
@@ -548,20 +506,13 @@ async function applyAdOverlay(job: Job, onProgress?: RenderProgressCallback) {
     await runFfmpeg(args);
   } catch (caught) {
     throw new RenderStepError("AD_OVERLAY", "AD_OVERLAY_FAILED", "우측 상단 [광고] 표시 합성에 실패했습니다.", {
-      font: AD_LABEL_FONT,
-      file_path: outputFile,
-      ffmpeg_command_summary: commandSummary(args),
-      stderr: stderrTail(caught),
+      font: AD_LABEL_FONT, file_path: outputFile, ffmpeg_command_summary: commandSummary(args), stderr: stderrTail(caught),
     });
   }
   job.render!.body_file = outputFile;
   addLog(job, "RENDER", "info", "[광고] 표시 합성 완료", {
-    substage: "AD_OVERLAY",
-    font: AD_LABEL_FONT,
-    font_size: AD_LABEL_FONT_SIZE,
-    color: AD_LABEL_COLOR,
-    margin_x: AD_LABEL_MARGIN_X,
-    margin_y: AD_LABEL_MARGIN_Y,
+    substage: "AD_OVERLAY", font: AD_LABEL_FONT, font_size: AD_LABEL_FONT_SIZE,
+    color: AD_LABEL_COLOR, margin_x: AD_LABEL_MARGIN_X, margin_y: AD_LABEL_MARGIN_Y,
   });
   succeedSubstage(job, "AD_OVERLAY", onProgress);
 }
