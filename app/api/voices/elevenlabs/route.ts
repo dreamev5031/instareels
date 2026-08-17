@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { ElevenLabsApiError, fetchElevenLabsVoice } from "@/elevenlabs/client";
 import { voiceStorage } from "@/voices/storage";
 
 export const runtime = "nodejs";
@@ -39,27 +38,17 @@ export async function POST(req: Request) {
     );
   }
 
-  let info;
   try {
-    info = await fetchElevenLabsVoice(voiceId);
+    // Registration intentionally performs no ElevenLabs API request.
+    // The user-supplied Voice ID is trusted and persisted verbatim apart
+    // from surrounding whitespace. Provider validity is checked only when
+    // preview/TTS is actually requested.
+    const entry = await voiceStorage.addVoice({ voiceId, alias });
+    return NextResponse.json({ voice: entry });
   } catch (caught) {
-    if (caught instanceof ElevenLabsApiError) {
-      const status = caught.code === "VOICE_NOT_FOUND" ? 404 : caught.code === "ELEVENLABS_NOT_CONFIGURED" ? 503 : 502;
-      return NextResponse.json({ error: caught.code, error_code: caught.code, message: caught.message }, { status });
-    }
     return NextResponse.json(
-      { error: "ELEVENLABS_API_ERROR", error_code: "ELEVENLABS_API_ERROR", message: caught instanceof Error ? caught.message : String(caught) },
-      { status: 502 },
+      { error: "VOICE_REGISTRY_UNAVAILABLE", error_code: "VOICE_REGISTRY_UNAVAILABLE", message: caught instanceof Error ? caught.message : "목소리를 저장하지 못했습니다." },
+      { status: 503 },
     );
   }
-
-  const entry = await voiceStorage.addVoice({
-    voiceId: info.voiceId,
-    alias,
-    providerName: info.name,
-    previewUrl: info.previewUrl,
-    labels: info.labels,
-  });
-
-  return NextResponse.json({ voice: entry });
 }
