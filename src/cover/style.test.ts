@@ -9,12 +9,16 @@ import {
   wrapCoverText,
 } from "./style";
 
+function closeTo(actual: number, expected: number) {
+  assert.ok(Math.abs(actual - expected) < 0.000001, `${actual} != ${expected}`);
+}
+
 test("cover typography keeps legacy insta-ad-generator defaults", () => {
   assert.equal(COVER_TEXT_STYLE.mainFontSize, 112);
   assert.equal(COVER_TEXT_STYLE.subFontSize, 64);
-  assert.equal(coverMainLineHeight(), 125.44);
-  assert.equal(coverSubLineHeight(), 75.52);
-  assert.equal(coverTextGap(), 33.28);
+  closeTo(coverMainLineHeight(), 125.44);
+  closeTo(coverSubLineHeight(), 75.52);
+  closeTo(coverTextGap(), 33.28);
   assert.equal(coverVerticalCenterPercent("top"), 19);
 });
 
